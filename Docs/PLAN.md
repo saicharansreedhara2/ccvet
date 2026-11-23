@@ -19,16 +19,17 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] Hard-coded hook (`ccvet gate` returning `defer`, or `ask` on internal error) wired via `ccvet init` into a scratch project's `.claude/settings.json`, exercised with the documented stdin example piped directly into `ccvet gate` — output matched the contract exactly. Also verified `ccvet init` is idempotent (second run is a no-op) and preserves pre-existing `PreToolUse` entries rather than clobbering them.
 - [ ] Still unverified: how Claude Code reconciles multiple `PreToolUse` hooks running in parallel when their decisions disagree — not stated in the docs page, flagged in `hook-contract.md` as an open question
 
-## Phase 1 — Layer 0/1 rule engine (no model required)
-- [ ] Rule schema (YAML): `pattern`, `verdict` (auto/ask/block), `scope` (bash/edit/write/all), `rationale`
-- [ ] Default `policy.yaml` shipped in-package, seeded from `risk-taxonomy.md` (including the non-Bash tool table: Edit/Write path rules, WebFetch/Task/unknown-MCP fallback)
-- [ ] Matcher: regex/glob rules + tool-type dispatch (Read/Grep/Glob always AUTO, Edit/Write path-based)
-- [ ] Shell tokenization via a real parser (`bashlex`/`shlex`), not raw-string regex — required to split compound commands (`&&`, `;`, `|`, `$(...)`) into sub-commands and classify each independently, taking the highest risk tier found
-- [ ] Obfuscation heuristics (decode-then-pipe-to-shell, env-var command reconstruction) as a separate pre-pass before literal matching
-- [ ] Path-scope checks resolve `realpath` first — symlinks and `../../` traversal must not bypass the project-root boundary or the persistence-file (`.git/hooks`, shell rc files, crontab, LaunchAgents) BLOCK rules
-- [ ] Verdict output: `allow` / `ask` / `deny`, with the matched rule's rationale attached as a consistent reason string on every decision, allow included — `"Allowed by ccvet: <rule rationale>"` / `"Blocked by ccvet: <rule rationale>"` / `"ccvet: <rule rationale> — escalating for review"`. Allow reasons aren't shown in the normal transcript (see hook-contract.md) but surface under `claude --debug` and in the audit log — they're populated regardless.
-- [ ] Unknown/unrecognized tool calls default to `ask`, never `allow` — the generic fallback, distinct from the Bash-specific GRAY case
-- [ ] Unit tests: one per taxonomy row (every AUTO/ASK/BLOCK example in risk-taxonomy.md gets a test case)
+## Phase 1 — Layer 0/1 rule engine (no model required) — DONE 2026-11-23
+- [x] Rule schema (YAML): shipped `data/default_policy.yaml` covers the argument-insensitive program lists (`auto_programs`/`ask_programs`/git auto/ask subcommands). Argument-sensitive rules (rm -rf, chmod -R 777, git push --force, obfuscation, secret/persistence paths) are hard-coded guards in `rules.py` by design — these are the safety floor and aren't meant to be user-overridable (documented at the top of the YAML file and in risk-taxonomy.md).
+- [x] Default policy shipped in-package (`src/ccvet/data/default_policy.yaml`), verified it's actually bundled into a built wheel (not just present in the editable install) — a real packaging check, not an assumption
+- [x] Tool-type dispatch in `engine.py`: Bash → `shellrules`, Read/Grep/Glob/Edit/Write/NotebookEdit → `fsrules`, WebSearch/WebFetch/Task/Agent handled directly, unknown tool → `defer`
+- [x] Shell tokenization via `bashlex` (verified against real parse trees for lists/pipelines/command-substitution before writing the extraction code) — splits compound commands (`&&`, `;`, `|`, `$(...)`) into sub-commands; a dynamically-constructed command name (e.g. `$(echo rm) -rf /`) is detected and denied outright since it can't be statically classified
+- [x] Obfuscation heuristic: decode (`base64`/`xxd`/`openssl`) or download (`curl`/`wget`) followed anywhere later in the same parse by a shell invocation (`sh`/`bash`/`zsh`/...) is denied — catches both `curl url | sh` and `echo <b64> | base64 -d | sh`
+- [x] Path-scope checks resolve `realpath` first (`paths.py`) — tested specifically against a symlink pointing outside the project root to confirm it can't bypass the boundary
+- [x] Verdict reason-string convention implemented exactly as specified (`verdict.py`) — `allow`/`ask`/`deny`/`defer` each produce a consistently prefixed, human-readable reason
+- [x] Unknown/unrecognized tool calls → `defer` (not `ask` — see verdict.py docstring for why these aren't interchangeable; `defer` is correct here since ccvet genuinely has no opinion on a tool it's never heard of, vs. Bash/file gray-zone cases where ccvet does have an opinion: "ask a human")
+- [x] 105 unit tests passing: `test_shell.py` (parser/extraction), `test_bash_rules.py` (taxonomy-row table: AUTO/ASK/BLOCK cases across every category), `test_fs_rules.py` (path scoping, symlink traversal, persistence/secret/manifest files), `test_engine_dispatch.py`, `test_gate.py` (end-to-end + crash safety), `test_init.py`
+- [x] Two real bugs caught and fixed by the test suite itself: `"/".rstrip("/")` collapsing to `""` and silently escaping the catastrophic-rm/chmod root-path check; `npm list`/`pip show` misclassified as ASK instead of AUTO (fixed by adding subcommand-aware classifiers for npm/pip, same pattern as git)
 
 ## Phase 2 — Hook integration
 - [ ] `ccvet gate`: reads `PreToolUse` JSON from stdin, runs the engine, emits `hookSpecificOutput` JSON (`permissionDecision`, `permissionDecisionReason`)

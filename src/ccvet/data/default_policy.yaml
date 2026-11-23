@@ -1,0 +1,80 @@
+# Simple program-level classification for ccvet's Bash rule engine.
+#
+# This file only covers programs whose risk doesn't depend on which flags or
+# arguments are present. Anything argument-sensitive (rm -rf, chmod -R 777,
+# git push --force, obfuscation/exfil patterns, secret and persistence file
+# paths, SQL without WHERE) lives in ccvet's built-in guards in rules.py
+# instead — those are the safety floor and are intentionally not
+# user-overridable from a YAML file. User overrides (Phase 3) will layer on
+# top of this file, not replace the built-in guards.
+
+auto_programs:
+  - ls
+  - pwd
+  - cat
+  - less
+  - more
+  - head
+  - tail
+  - grep
+  - rg
+  - ag
+  - file
+  - stat
+  - wc
+  - diff
+  - tree
+  - du
+  - df
+  - which
+  - type
+  - uname
+  - whoami
+  - id
+  - uptime
+  - ps
+  - top
+  - env
+
+# npm/pip/pip3 are deliberately absent here — they have their own
+# subcommand-aware classifier in rules.py (list/show/freeze are read-only,
+# everything else asks, publish/upload is blocked).
+ask_programs:
+  - mkdir
+  - touch
+  - cp
+  - mv
+  - ln
+  - chmod
+  - npx
+  - cargo
+  - go
+  - brew
+  - make
+  - docker
+  - kill
+  - killall
+  - pkill
+  - curl
+  - wget
+  - ping
+  - dig
+  - nslookup
+  - aws
+  - kubectl
+  - terraform
+  - gcloud
+  - pytest
+  - eslint
+  - tsc
+  - systemctl
+  - launchctl
+  - crontab
+
+# Git subcommands with no argument-sensitivity (no destructive flags
+# possible for these specific subcommands). "push", "reset", "clean",
+# "branch", "stash", and "filter-branch" are handled by dedicated logic in
+# rules.py instead, since their risk depends entirely on their flags.
+git:
+  auto_subcommands: [status, diff, log, show, blame, remote, fetch, describe, tag]
+  ask_subcommands: [add, commit, checkout, merge, pull, rebase]

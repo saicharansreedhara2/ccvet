@@ -1,48 +1,43 @@
-"""PreToolUse hook entry point.
-
-Phase 0.5 spike: no rule engine yet (that's Phase 1). This exists to prove
-the stdin/stdout contract against a real Claude Code hook invocation before
-any real classification logic is built on top of it.
-
-Must never crash: a raw traceback on stdout would be an invalid hook
-response, so every path here is wrapped to still emit valid JSON.
+"""PreToolUse hook entry point. Must never crash: a raw traceback on stdout
+would be an invalid hook response, so the whole evaluation is wrapped and
+any internal error degrades to an explicit `ask` (not `defer` — see
+verdict.py for why those aren't interchangeable as a failure mode).
 """
 
 import json
 import sys
 
+from . import engine
+from .verdict import Verdict
 
-def _decision(decision: str, reason: str) -> dict:
+
+def _hook_output(verdict: Verdict) -> dict:
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": decision,
-            "permissionDecisionReason": reason,
+            "permissionDecision": verdict.decision,
+            "permissionDecisionReason": verdict.reason,
         }
     }
 
 
 def build_response(raw_stdin: str) -> dict:
-    # "defer" (no opinion, let normal permission flow decide) is correct here
-    # since there's genuinely no rule engine yet. On an internal error we use
-    # "ask" instead, deliberately not "defer" — defer's behavior depends on
-    # the session's current permission_mode (e.g. bypassPermissions would let
-    # it straight through), which is exactly the wrong failure mode for a crash.
     try:
         payload = json.loads(raw_stdin) if raw_stdin.strip() else {}
-        tool_name = payload.get("tool_name", "unknown")
-        return _decision(
-            "defer",
-            f"ccvet spike build: rule engine not implemented yet (Phase 1), "
-            f"deferring {tool_name} to normal permission flow.",
-        )
+        tool_name = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input") or {}
+        cwd = payload.get("cwd") or "."
+
+        if not tool_name:
+            verdict = Verdict.defer("hook input had no tool_name")
+        else:
+            verdict = engine.evaluate(tool_name, tool_input, cwd)
     except Exception as exc:
-        return _decision(
-            "ask", f"ccvet internal error ({exc.__class__.__name__}); escalating to be safe."
-        )
+        verdict = Verdict.ask(f"ccvet internal error ({exc.__class__.__name__}); escalating to be safe.")
+
+    return _hook_output(verdict)
 
 
 def run() -> int:
-    response = build_response(sys.stdin.read())
-    print(json.dumps(response))
+    print(json.dumps(build_response(sys.stdin.read())))
     return 0

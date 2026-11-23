@@ -9,6 +9,10 @@ description = "A risk-classifying PreToolUse gate for Claude Code: auto-approve 
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
+dependencies = [
+    "bashlex>=0.18",
+    "pyyaml>=6.0",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Environment :: Console",
