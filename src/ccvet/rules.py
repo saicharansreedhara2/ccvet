@@ -86,14 +86,14 @@ def _classify_git(args):
     from .verdict import Verdict
 
     if not args:
-        return Verdict.ask("bare `git` call with no subcommand")
+        return Verdict.ask("bare `git` call with no subcommand", overridable=True)
 
     sub, rest = args[0], args[1:]
 
     if sub == "push":
         if any(f in rest for f in ("--force", "-f", "--force-with-lease")):
             return Verdict.deny("git push --force (or -f) can destroy remote history")
-        return Verdict.ask("git push")
+        return Verdict.ask("git push", overridable=True)
     if sub == "reset" and "--hard" in rest:
         return Verdict.deny("git reset --hard destroys uncommitted work")
     if sub == "clean" and any(f.lstrip("-").find("f") != -1 for f in rest if f.startswith("-")):
@@ -102,18 +102,18 @@ def _classify_git(args):
         target = next((a for a in rest if not a.startswith("-")), "")
         if target.lower() in PROTECTED_BRANCHES:
             return Verdict.deny(f"git branch -D on protected branch {target!r}")
-        return Verdict.ask(f"git branch -D {target}".strip())
+        return Verdict.ask(f"git branch -D {target}".strip(), overridable=True)
     if sub == "filter-branch":
         return Verdict.deny("git filter-branch rewrites history")
     if sub == "stash":
         if not rest or rest[0] == "list":
-            return Verdict.allow("git stash list is read-only")
-        return Verdict.ask(f"git stash {' '.join(rest)}".strip())
+            return Verdict.allow("git stash list is read-only", overridable=True)
+        return Verdict.ask(f"git stash {' '.join(rest)}".strip(), overridable=True)
     if sub in GIT_AUTO_SUBCOMMANDS:
-        return Verdict.allow(f"git {sub} is read-only")
+        return Verdict.allow(f"git {sub} is read-only", overridable=True)
     if sub in GIT_ASK_SUBCOMMANDS:
-        return Verdict.ask(f"git {sub}")
-    return Verdict.ask(f"git {sub} (unrecognized subcommand)")
+        return Verdict.ask(f"git {sub}", overridable=True)
+    return Verdict.ask(f"git {sub} (unrecognized subcommand)", overridable=True)
 
 
 def classify_argv(argv):
@@ -151,13 +151,13 @@ def classify_argv(argv):
 
     if program == "npm":
         if args and args[0] in NPM_AUTO_SUBCOMMANDS:
-            return Verdict.allow(f"npm {args[0]} is read-only")
-        return Verdict.ask(f"npm {' '.join(args)}".strip())
+            return Verdict.allow(f"npm {args[0]} is read-only", overridable=True)
+        return Verdict.ask(f"npm {' '.join(args)}".strip(), overridable=True)
 
     if program in {"pip", "pip3"}:
         if args and args[0] in PIP_AUTO_SUBCOMMANDS:
-            return Verdict.allow(f"{program} {args[0]} is read-only")
-        return Verdict.ask(f"{program} {' '.join(args)}".strip())
+            return Verdict.allow(f"{program} {args[0]} is read-only", overridable=True)
+        return Verdict.ask(f"{program} {' '.join(args)}".strip(), overridable=True)
 
     if program == "twine" and "upload" in args:
         return Verdict.deny("twine upload pushes a package to the public registry")
@@ -184,13 +184,13 @@ def classify_argv(argv):
 
     if program == "find":
         if "-delete" in args or "-exec" in args:
-            return Verdict.ask(f"find with -delete/-exec can modify or remove files ({args!r})")
-        return Verdict.allow("find without -delete/-exec is read-only")
+            return Verdict.ask(f"find with -delete/-exec can modify or remove files ({args!r})", overridable=True)
+        return Verdict.allow("find without -delete/-exec is read-only", overridable=True)
 
     if program in AUTO_PROGRAMS:
-        return Verdict.allow(f"{program} is on the read-only allowlist")
+        return Verdict.allow(f"{program} is on the read-only allowlist", overridable=True)
 
     if program in ASK_PROGRAMS:
-        return Verdict.ask(f"{program} {' '.join(args)}".strip())
+        return Verdict.ask(f"{program} {' '.join(args)}".strip(), overridable=True)
 
-    return Verdict.ask(f"unrecognized command `{program}`, no rule matched")
+    return Verdict.ask(f"unrecognized command `{program}`, no rule matched", overridable=True)

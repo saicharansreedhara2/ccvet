@@ -25,7 +25,23 @@ Claude Code doesn't show a hook's reason in the normal chat transcript for auto-
 claude --debug
 ```
 
-Otherwise, check `ccvet log` for a running record of every decision ccvet has made, independent of whether you're in debug mode. (The raw audit log lives at `~/.ccvet/audit.jsonl` in the meantime, before the `ccvet log` viewer command exists.)
+Otherwise, run:
+
+```
+ccvet log --tail 20
+```
+
+for a human-readable record of every decision ccvet has made, independent of whether you're in debug mode. `ccvet status` summarizes the overall state (hooks wired, policy files, Layer 2 config, audit log size).
+
+## Tuning the policy
+
+```
+ccvet check "docker build ."      # see what ccvet would decide, without running it for real
+ccvet allow "docker build ."      # promote it to allow after you've reviewed it
+ccvet policy edit                 # hand-edit the project's .ccvet/policy.yaml directly
+```
+
+User rules can only loosen (or further restrict) ccvet's own judgment-call defaults — they can never bypass a hard-coded safety-floor guard like `rm -rf /` or `git push --force`, even if you explicitly try to `allow` one.
 
 ## Uninstalling
 

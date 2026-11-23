@@ -4,11 +4,11 @@ for credential-path references across the whole command, then classify
 each extracted sub-command individually and take the most severe result.
 """
 
-from . import rules, shell, sql_guard
+from . import rules, shell, sql_guard, userpolicy
 from .verdict import Verdict, most_severe
 
 
-def evaluate(command: str) -> Verdict:
+def evaluate(command: str, cwd: str = ".") -> Verdict:
     if not command or not command.strip():
         return Verdict.allow("empty command")
 
@@ -32,4 +32,11 @@ def evaluate(command: str) -> Verdict:
         return secret_verdict
 
     verdicts = [rules.classify_argv(argv) for argv in all_argvs]
-    return most_severe(verdicts)
+    verdict = most_severe(verdicts)
+
+    if verdict.overridable:
+        override = userpolicy.find_override(command, cwd)
+        if override is not None:
+            return override
+
+    return verdict

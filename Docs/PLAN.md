@@ -40,15 +40,18 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] `ccvet gate --dry-run`: evaluates and prints the decision but skips the audit-log write — verified via a real end-to-end smoke test (dangerous command denied, dry-run confirmed absent from the log; a non-dry-run safe command confirmed present)
 - [x] A failure inside `audit.log()` is swallowed, never allowed to affect the already-emitted decision or crash the hook (tested by injecting a forced `OSError`)
 
-## Phase 3 — Config & status
-- [ ] `ccvet config get/set` (policy file path, classifier backend settings)
-- [ ] `ccvet status`/`ccvet doctor`: shows wired hooks, active policy file, Layer 2 reachability (or "disabled")
-- [ ] `ccvet policy edit`: opens the active policy file in `$EDITOR`
-- [ ] `ccvet check "<command>"`: dry-run a single command/tool call through the engine and print the verdict + matched rule, without needing a live Claude Code session — essential for anyone tuning their own policy
-- [ ] `ccvet log` / `ccvet log --tail`: human-readable view of the audit log, for trust-building ("show me what you've been deciding")
-- [ ] `ccvet allow "<pattern>"`: promote a specific command/pattern straight into the user's policy file after they've been asked about it repeatedly — avoids hand-editing YAML for the common "stop asking me about this" case
-- [ ] Policy precedence: project-local `.ccvet/policy.yaml` overrides/extends global `~/.ccvet/policy.yaml`, not replaces it — define and test the merge order
-- [ ] Policy presets at `ccvet init` time (`strict`/`default`/`permissive`) as starting points, not just one fixed default
+## Phase 3 — Config & status — mostly DONE 2026-11-23
+- [x] `ccvet config get/set`: dotted-key YAML store at `~/.ccvet/config.yaml` (`config.py`). Nothing consumes it yet — Phase 4's classifier settings will be the first real reader — but the plumbing is built and tested now.
+- [x] `ccvet status`: reports project/global hook-wiring state, project/global policy rule counts, Layer 2 config presence, and audit log entry count. Smoke-tested end to end in an isolated scratch project, not just unit-tested.
+- [x] `ccvet policy edit`: opens the active `.ccvet/policy.yaml` (project by default, `--global` for the user's global one — **not** the shipped built-in `data/default_policy.yaml`, which stays code-managed) in `$EDITOR`, creating an empty `rules: []` file first if none exists
+- [x] `ccvet check "<command>"` (and `--tool`/`--path`/`--url` for non-Bash tool calls): dry-runs through the real engine and prints decision/reason/overridable
+- [x] `ccvet log --tail N`: human-readable view of the audit log (defaults to last 20 entries, `--tail 0` for all)
+- [x] `ccvet allow "<pattern>"`: writes a rule to the project (or `--global`) policy.yaml; literal by default (regex-escaped), `--regex` to pass a pattern through verbatim; `--verdict ask|deny` also supported for the "add my own stricter rule" case, not just promote-to-allow
+- [x] User policy precedence implemented in `userpolicy.py`: project `.ccvet/policy.yaml` rules are checked before global `~/.ccvet/policy.yaml` ones, first match wins — tested, including that a malformed regex in a user rule is skipped rather than fatal
+- [x] **Safety invariant, enforced structurally, not just by convention**: added an `overridable` field to `Verdict` (default `False`). Every named safety-floor guard in `rules.py`/`shell.py`/`sql_guard.py` leaves it at the default; only the generic program-list/gray-zone fallbacks set it `True`. A user policy rule can only take effect where the built-in verdict was already `overridable=True` — verified end-to-end that an `ccvet allow "rm -rf /"` rule is silently ignored and the command still gets denied. `most_severe()` was also fixed to prefer the non-overridable verdict on a rank tie, so a compound command mixing an overridable ask with a non-overridable one can't be bypassed either.
+- [ ] Policy presets at `ccvet init` time (`strict`/`default`/`permissive`) — not done this pass, deferred (low value until there's real usage to calibrate presets against)
+
+**Bug caught by integration testing, not unit testing**: the `check` subcommand's positional argument was named `command`, colliding with the top-level `argparse` subparsers' `dest="command"` — both write into the same flat `Namespace`, so `ccvet check "docker build ."` silently set `args.command` to the command text instead of `"check"`, and the whole dispatch fell through to the help text. The `test_commands.py` tests didn't catch this because they hand-built `argparse.Namespace` objects directly, bypassing real parsing. Fixed by renaming the positional to `shell_command`, and added `test_cli.py` to parse real argv for every subcommand going forward.
 
 ## Phase 4 — Layer 2 (optional LLM gray-zone classifier)
 - [ ] OpenAI-compatible client, configurable `base_url`/`model`/`api_key` — covers Ollama/LM Studio/vLLM/mtplx uniformly

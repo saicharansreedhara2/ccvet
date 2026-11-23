@@ -4,7 +4,7 @@ from .verdict import Verdict
 
 def evaluate(tool_name: str, tool_input: dict, cwd: str) -> Verdict:
     if tool_name == "Bash":
-        return shellrules.evaluate(tool_input.get("command", ""))
+        return shellrules.evaluate(tool_input.get("command", ""), cwd)
 
     if tool_name in fsrules.READ_ONLY_TOOLS or tool_name in fsrules.WRITE_TOOLS:
         return fsrules.evaluate(tool_name, tool_input, cwd)
