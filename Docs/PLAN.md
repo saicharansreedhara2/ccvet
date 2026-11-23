@@ -1,0 +1,81 @@
+# ccvet — Implementation Plan
+
+Risk-classifying `PreToolUse` gate for Claude Code. Public repo on mortalapps GitHub, published to PyPI as `pip3 install ccvet`. Layer 0/1 (rules + heuristics) must fully work with zero model configured; Layer 2 (LLM) is opt-in for the gray zone only. See `risk-taxonomy.md` for the full command classification that backs Phase 1.
+
+Legend: `[ ]` not started · `[~]` in progress · `[x]` done
+
+## Phase 0 — Repo & packaging scaffold
+- [x] Repo layout: `src/ccvet/`, `tests/`, `pyproject.toml`, `README.md`, `LICENSE` (MIT)
+- [~] CLI entry point (`ccvet`) with subcommands: `init`, `gate` done; `config`, `policy`, `status`, `check`, `log`, `allow`, `uninstall` still stubs for later phases
+- [x] Minimal `pyproject.toml` (build backend, metadata, `entry_points`)
+- [x] Keep runtime deps minimal and imports lazy — `gate`/`init` modules are imported inside the CLI dispatch functions, not at module load time; zero runtime dependencies so far
+- [x] `pip install -e .` + `ccvet --version` smoke test (venv at `.venv/`, gitignored)
+- [x] Git init, first commit — staying local, not pushed to mortalapps GitHub until Phase 6
+
+## Phase 0.5 — Spike: verify the actual Claude Code hook contract
+- [x] Confirmed exact `PreToolUse` stdin JSON shape against current docs (`code.claude.com/docs/en/hooks`) — see `Docs/hook-contract.md`
+- [x] Confirmed `permissionDecision` has 4 values, not 3: `allow`/`deny`/`ask`/`defer`. `defer` (hand back to normal permission flow) is what ccvet uses for "no opinion yet"; `ask` is reserved for an explicit escalation, including ccvet's own crash fallback — `defer`'s behavior depends on the session's `permission_mode`, which is the wrong failure mode for an internal error, so the two are not interchangeable
+- [x] Confirmed hook timeout: 600s default for `PreToolUse` (not 30s), configurable per-handler; on timeout the tool call falls through to normal permission flow rather than being blocked — Layer 2's budget (Phase 4) has ample room under the 10s handler timeout `ccvet init` sets
+- [x] Hard-coded hook (`ccvet gate` returning `defer`, or `ask` on internal error) wired via `ccvet init` into a scratch project's `.claude/settings.json`, exercised with the documented stdin example piped directly into `ccvet gate` — output matched the contract exactly. Also verified `ccvet init` is idempotent (second run is a no-op) and preserves pre-existing `PreToolUse` entries rather than clobbering them.
+- [ ] Still unverified: how Claude Code reconciles multiple `PreToolUse` hooks running in parallel when their decisions disagree — not stated in the docs page, flagged in `hook-contract.md` as an open question
+
+## Phase 1 — Layer 0/1 rule engine (no model required)
+- [ ] Rule schema (YAML): `pattern`, `verdict` (auto/ask/block), `scope` (bash/edit/write/all), `rationale`
+- [ ] Default `policy.yaml` shipped in-package, seeded from `risk-taxonomy.md` (including the non-Bash tool table: Edit/Write path rules, WebFetch/Task/unknown-MCP fallback)
+- [ ] Matcher: regex/glob rules + tool-type dispatch (Read/Grep/Glob always AUTO, Edit/Write path-based)
+- [ ] Shell tokenization via a real parser (`bashlex`/`shlex`), not raw-string regex — required to split compound commands (`&&`, `;`, `|`, `$(...)`) into sub-commands and classify each independently, taking the highest risk tier found
+- [ ] Obfuscation heuristics (decode-then-pipe-to-shell, env-var command reconstruction) as a separate pre-pass before literal matching
+- [ ] Path-scope checks resolve `realpath` first — symlinks and `../../` traversal must not bypass the project-root boundary or the persistence-file (`.git/hooks`, shell rc files, crontab, LaunchAgents) BLOCK rules
+- [ ] Verdict output: `allow` / `ask` / `deny`, with the matched rule's rationale attached
+- [ ] Unknown/unrecognized tool calls default to `ask`, never `allow` — the generic fallback, distinct from the Bash-specific GRAY case
+- [ ] Unit tests: one per taxonomy row (every AUTO/ASK/BLOCK example in risk-taxonomy.md gets a test case)
+
+## Phase 2 — Hook integration
+- [ ] `ccvet gate`: reads `PreToolUse` JSON from stdin, runs the engine, emits `hookSpecificOutput` JSON (`permissionDecision`, `permissionDecisionReason`)
+- [x] Top-level crash safety: any uncaught exception inside `ccvet gate` must still emit a valid `ask` decision (not `defer` — see Phase 0.5), never a raw traceback on stdout. Implemented and tested in the Phase 0.5 spike (`gate.py`/`test_gate.py`); carries forward unchanged once the real rule engine replaces the placeholder logic.
+- [ ] `ccvet init`: project-local by default, `--global` writes `~/.claude/settings.json`; merges into existing hooks (never overwrites), shows a diff, asks for confirmation before writing
+- [ ] `ccvet uninstall` (or `ccvet init --remove`): cleanly removes just ccvet's hook entry, leaving any other configured hooks untouched — install should be as reversible as it is easy
+- [ ] Audit log (JSONL), concurrency-safe (append mode + file lock, since multiple Claude Code sessions may run against the same project): timestamp, tool, input (or hash if sensitive), verdict, matched rule, latency
+- [ ] `ccvet gate --dry-run` mode for testing without being wired into Claude Code yet
+
+## Phase 3 — Config & status
+- [ ] `ccvet config get/set` (policy file path, classifier backend settings)
+- [ ] `ccvet status`/`ccvet doctor`: shows wired hooks, active policy file, Layer 2 reachability (or "disabled")
+- [ ] `ccvet policy edit`: opens the active policy file in `$EDITOR`
+- [ ] `ccvet check "<command>"`: dry-run a single command/tool call through the engine and print the verdict + matched rule, without needing a live Claude Code session — essential for anyone tuning their own policy
+- [ ] `ccvet log` / `ccvet log --tail`: human-readable view of the audit log, for trust-building ("show me what you've been deciding")
+- [ ] `ccvet allow "<pattern>"`: promote a specific command/pattern straight into the user's policy file after they've been asked about it repeatedly — avoids hand-editing YAML for the common "stop asking me about this" case
+- [ ] Policy precedence: project-local `.ccvet/policy.yaml` overrides/extends global `~/.ccvet/policy.yaml`, not replaces it — define and test the merge order
+- [ ] Policy presets at `ccvet init` time (`strict`/`default`/`permissive`) as starting points, not just one fixed default
+
+## Phase 4 — Layer 2 (optional LLM gray-zone classifier)
+- [ ] OpenAI-compatible client, configurable `base_url`/`model`/`api_key` — covers Ollama/LM Studio/vLLM/mtplx uniformly
+- [ ] Forced structured JSON output (`risk`, `reversible`, `blast_radius`, `rationale`) with schema validation
+- [ ] Explicit timeout budget (e.g. 5s, comfortably under the hook timeout confirmed in Phase 0.5) — timeout/error/malformed-output all fail safe to `ask`, never `allow`
+- [ ] Prompt hardening: tool input fenced explicitly as data, not instructions (anti prompt-injection)
+- [ ] `ccvet init` auto-detects a running local server (Ollama `:11434`, LM Studio `:1234`) and offers to wire it in
+
+## Phase 5 — Testing & hardening
+- [ ] Golden test suite: full taxonomy table → expected verdict, run in CI
+- [ ] Edge-case tests: obfuscated destructive commands, compound commands (`safe_cmd && dangerous_cmd`), path traversal into `~/.ssh` via relative paths and symlinks
+- [ ] Confirm BLOCK tier is truly unoverridable by a Layer 2 verdict (test a mocked LLM that returns "low risk" for a BLOCK-listed command — must still block)
+- [ ] Crash-safety tests: feed the engine malformed/truncated hook JSON, confirm it still degrades to `ask` rather than raising
+- [ ] Concurrency test: two simultaneous `ccvet gate` invocations writing to the same audit log don't corrupt it
+
+## Phase 6 — Docs & release
+- [ ] README: install, quickstart, policy customization, Layer 2 setup, what each verdict tier means
+- [ ] SECURITY.md: explicit threat model and limitations — ccvet is a heuristic + LLM advisory gate, not a sandbox; it reduces risk, it doesn't replace least-privilege or container isolation. Say this plainly so nobody over-trusts it.
+- [ ] CONTRIBUTING.md: how the community proposes new taxonomy rules (PR template: command/pattern → proposed verdict → rationale)
+- [ ] LICENSE: MIT
+- [ ] Supply-chain hygiene for ccvet's own release: pinned dependencies, PyPI trusted publishing from GitHub Actions (no long-lived PyPI tokens sitting in repo secrets)
+- [ ] Push repo to mortalapps GitHub org
+- [ ] PyPI packaging + first publish (`ccvet` — process reference only from nrchd's release setup, no shared code)
+- [ ] Release automation (version bump + GitHub Action to publish on tag, if nrchd's workflow pattern fits)
+
+## Phase 7 — Stretch goals (post-v1, not blocking initial release)
+- [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
+- [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1 — see Scope notes in risk-taxonomy.md)
+
+## Open decisions (not blocking Phase 0-1)
+- Exact repo name on GitHub (`ccvet` vs `ccvet-gate` etc.) — confirm before creating the GitHub repo
+- Whether `ask` prompts render inline in Claude Code's own permission UI or need a separate TTY prompt — resolved by the Phase 0.5 spike, not assumed

@@ -1,0 +1,76 @@
+# Claude Code PreToolUse Hook Contract (verified 2026-11-23)
+
+Source: https://code.claude.com/docs/en/hooks. Captured here because the whole tool is built on this contract — re-verify against this page if Claude Code's hook format ever changes.
+
+## stdin (what `ccvet gate` receives)
+```json
+{
+  "session_id": "abc123",
+  "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+  "transcript_path": "/home/user/.claude/projects/.../transcript.jsonl",
+  "cwd": "/home/user/my-project",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-my-project/abc123/scratchpad",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": { "command": "npm test", "description": "Run test suite", "timeout": 120000, "run_in_background": false },
+  "tool_use_id": "toolu_01ABC123..."
+}
+```
+
+## stdout (what `ccvet gate` must print, exit 0)
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Destructive command blocked by hook"
+  }
+}
+```
+
+`permissionDecision` values:
+| Value | Behavior |
+|---|---|
+| `allow` | Permit the tool call |
+| `deny` | Block the tool call |
+| `ask` | Escalate to the user |
+| `defer` | Hand back to Claude Code's normal permission flow — **this is ccvet's internal fallback when it has no opinion**, not `ask`, since `ask` and `defer` are different things on the wire even though both end up asking the user in most permission modes. |
+
+A hook can also rewrite the call instead of just approving/denying it: `{"hookSpecificOutput": {"allow": true, "updatedInput": {...}}}`. Not used by ccvet v1, but worth knowing it exists.
+
+## Exit codes
+- `0` — success; stdout JSON (if any) is applied, otherwise normal permission flow runs.
+- `2` — blocking error; tool call is blocked regardless of any JSON printed; stderr becomes the shown reason.
+- other — non-blocking error (unless `onFailure: "block"`); tool call proceeds, stderr shown as a hook error notice.
+
+**ccvet always exits 0 and communicates via the JSON `permissionDecision` field** — exit code 2 is a blunter instrument (ignores our JSON) that we don't need.
+
+## Timeout
+Default for `PreToolUse` command/http/mcp_tool hooks: **600 seconds** (30s default only applies to `UserPromptSubmit`/`PreModelSwitch`/`PostModelSwitch`, not us). Configurable per-handler via `"timeout"` (seconds) in settings.json.
+
+**On timeout**: the hook is cancelled, its output discarded, and — critically — *the tool call is NOT blocked by default*; it falls through to normal permission flow, unless `onFailure: "block"` is set on that handler. This is actually the right default for ccvet: if Layer 2 hangs, the user still gets a normal prompt rather than the agent silently proceeding.
+
+Layer 4's internal LLM-call timeout should be set well under whatever handler timeout we configure (we're setting the handler timeout to 10s in `ccvet init`; Layer 2's internal budget should be ~5s so it has room to emit its own `ask` fallback before Claude Code's cancellation kicks in).
+
+## settings.json shape
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "ccvet gate", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
+```
+- `matcher` filters by tool name pattern (`"Bash"`, `"Edit|Write"`, regex, or `"*"` for all) — ccvet installs itself with `"*"` since it wants to see every tool call and apply its own internal dispatch (Read/Grep/Glob vs Bash vs Edit/Write vs everything else) rather than relying on the matcher to pre-filter.
+- Multiple matcher groups can coexist for the same event; **hooks run in parallel when an event fires** — if the user has other `PreToolUse` hooks installed, ours runs alongside them, not before/after. `ccvet init` must merge into the `PreToolUse` array, never replace it.
+- Handler `type` can be `command`, `http`, `mcp_tool`, `prompt`, or `agent` — ccvet uses `command`.
+
+## Open question not yet resolved by the docs page
+How Claude Code reconciles multiple hooks' decisions when they run in parallel and disagree (e.g. one says `allow`, another says `ask`) isn't stated on this page. Treat as unknown — don't assume ccvet's `deny` is guaranteed to win over another hook's `allow` until verified against real behavior.
