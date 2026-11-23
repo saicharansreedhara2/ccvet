@@ -26,7 +26,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [ ] Shell tokenization via a real parser (`bashlex`/`shlex`), not raw-string regex — required to split compound commands (`&&`, `;`, `|`, `$(...)`) into sub-commands and classify each independently, taking the highest risk tier found
 - [ ] Obfuscation heuristics (decode-then-pipe-to-shell, env-var command reconstruction) as a separate pre-pass before literal matching
 - [ ] Path-scope checks resolve `realpath` first — symlinks and `../../` traversal must not bypass the project-root boundary or the persistence-file (`.git/hooks`, shell rc files, crontab, LaunchAgents) BLOCK rules
-- [ ] Verdict output: `allow` / `ask` / `deny`, with the matched rule's rationale attached
+- [ ] Verdict output: `allow` / `ask` / `deny`, with the matched rule's rationale attached as a consistent reason string on every decision, allow included — `"Allowed by ccvet: <rule rationale>"` / `"Blocked by ccvet: <rule rationale>"` / `"ccvet: <rule rationale> — escalating for review"`. Allow reasons aren't shown in the normal transcript (see hook-contract.md) but surface under `claude --debug` and in the audit log — they're populated regardless.
 - [ ] Unknown/unrecognized tool calls default to `ask`, never `allow` — the generic fallback, distinct from the Bash-specific GRAY case
 - [ ] Unit tests: one per taxonomy row (every AUTO/ASK/BLOCK example in risk-taxonomy.md gets a test case)
 

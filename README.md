@@ -17,6 +17,16 @@ ccvet init
 
 `ccvet init` wires a `PreToolUse` hook into your project's `.claude/settings.json` (or `~/.claude/settings.json` with `--global`), merging into any existing hooks rather than overwriting them.
 
+## Seeing what ccvet decided
+
+Claude Code doesn't show a hook's reason in the normal chat transcript for auto-approved ("allow") actions — only for blocks and escalations. To see ccvet's reasoning for *every* decision, including allows, in real time:
+
+```
+claude --debug
+```
+
+Otherwise, check `ccvet log` for a running record of every decision ccvet has made, independent of whether you're in debug mode.
+
 ## License
 
 MIT

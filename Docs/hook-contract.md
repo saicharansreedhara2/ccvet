@@ -72,5 +72,12 @@ Layer 4's internal LLM-call timeout should be set well under whatever handler ti
 - Multiple matcher groups can coexist for the same event; **hooks run in parallel when an event fires** — if the user has other `PreToolUse` hooks installed, ours runs alongside them, not before/after. `ccvet init` must merge into the `PreToolUse` array, never replace it.
 - Handler `type` can be `command`, `http`, `mcp_tool`, `prompt`, or `agent` — ccvet uses `command`.
 
+## Visibility of `permissionDecisionReason` (verified 2026-11-23)
+- **`deny`**: reason is shown to the user as a hook-error notice in the transcript.
+- **`ask`/`defer`**: reason is shown as part of the permission escalation itself.
+- **`allow`**: **not shown.** The docs are explicit that "Claude never sees stderr from a hook that exits 0" — the same silence applies to the JSON reason field for `allow`; there's no transcript mode that lists every hook decision inline, only a debug-log flag (`claude --debug`) and a `/hooks` menu that shows *configured* hooks, not runtime decisions.
+
+**Decision**: ccvet still populates `permissionDecisionReason` on every decision, including `allow` — it's free, and it's exactly what shows up under `claude --debug`. The real user-facing record of allow decisions is ccvet's own audit log (`ccvet log`, Phase 2/3), not the live chat transcript. README documents `claude --debug` as the way to see allow reasons in real time for anyone who wants that during setup/testing.
+
 ## Open question not yet resolved by the docs page
 How Claude Code reconciles multiple hooks' decisions when they run in parallel and disagree (e.g. one says `allow`, another says `ask`) isn't stated on this page. Treat as unknown — don't assume ccvet's `deny` is guaranteed to win over another hook's `allow` until verified against real behavior.
