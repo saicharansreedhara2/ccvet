@@ -25,7 +25,15 @@ Claude Code doesn't show a hook's reason in the normal chat transcript for auto-
 claude --debug
 ```
 
-Otherwise, check `ccvet log` for a running record of every decision ccvet has made, independent of whether you're in debug mode.
+Otherwise, check `ccvet log` for a running record of every decision ccvet has made, independent of whether you're in debug mode. (The raw audit log lives at `~/.ccvet/audit.jsonl` in the meantime, before the `ccvet log` viewer command exists.)
+
+## Uninstalling
+
+```
+ccvet uninstall
+```
+
+Removes just ccvet's hook entry from `.claude/settings.json` (or `~/.claude/settings.json` with `--global`), leaving any other hooks you have configured untouched.
 
 ## License
 

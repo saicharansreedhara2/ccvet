@@ -74,3 +74,44 @@ def run(use_global: bool = False, assume_yes: bool = False) -> int:
     path.write_text(json.dumps(after, indent=2) + "\n")
     print(f"Wired ccvet into {path}")
     return 0
+
+
+def uninstall(use_global: bool = False, assume_yes: bool = False) -> int:
+    path = settings_path(use_global)
+    before = _load(path)
+    pre_tool_use = before.get("hooks", {}).get("PreToolUse", [])
+    remaining = [e for e in pre_tool_use if not _is_ccvet_entry(e)]
+
+    if len(remaining) == len(pre_tool_use):
+        print(f"ccvet is not wired into {path} — nothing to do.")
+        return 0
+
+    after = dict(before)
+    after_hooks = dict(after.get("hooks", {}))
+    if remaining:
+        after_hooks["PreToolUse"] = remaining
+    else:
+        after_hooks.pop("PreToolUse", None)
+    if after_hooks:
+        after["hooks"] = after_hooks
+    else:
+        after.pop("hooks", None)
+
+    before_text = json.dumps(before, indent=2, sort_keys=True)
+    after_text = json.dumps(after, indent=2, sort_keys=True)
+
+    print(f"About to update {path}:")
+    print("--- before ---")
+    print(before_text)
+    print("--- after ---")
+    print(after_text)
+
+    if not assume_yes:
+        reply = input("Remove ccvet's hook? [y/N] ").strip().lower()
+        if reply != "y":
+            print("Aborted, no changes written.")
+            return 1
+
+    path.write_text(json.dumps(after, indent=2) + "\n")
+    print(f"Removed ccvet from {path}")
+    return 0

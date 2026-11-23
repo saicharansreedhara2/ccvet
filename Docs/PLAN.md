@@ -31,13 +31,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] 105 unit tests passing: `test_shell.py` (parser/extraction), `test_bash_rules.py` (taxonomy-row table: AUTO/ASK/BLOCK cases across every category), `test_fs_rules.py` (path scoping, symlink traversal, persistence/secret/manifest files), `test_engine_dispatch.py`, `test_gate.py` (end-to-end + crash safety), `test_init.py`
 - [x] Two real bugs caught and fixed by the test suite itself: `"/".rstrip("/")` collapsing to `""` and silently escaping the catastrophic-rm/chmod root-path check; `npm list`/`pip show` misclassified as ASK instead of AUTO (fixed by adding subcommand-aware classifiers for npm/pip, same pattern as git)
 
-## Phase 2 — Hook integration
-- [ ] `ccvet gate`: reads `PreToolUse` JSON from stdin, runs the engine, emits `hookSpecificOutput` JSON (`permissionDecision`, `permissionDecisionReason`)
+## Phase 2 — Hook integration — DONE 2026-11-23
+- [x] `ccvet gate`: reads `PreToolUse` JSON from stdin, runs the engine, emits `hookSpecificOutput` JSON (`permissionDecision`, `permissionDecisionReason`)
 - [x] Top-level crash safety: any uncaught exception inside `ccvet gate` must still emit a valid `ask` decision (not `defer` — see Phase 0.5), never a raw traceback on stdout. Implemented and tested in the Phase 0.5 spike (`gate.py`/`test_gate.py`); carries forward unchanged once the real rule engine replaces the placeholder logic.
-- [ ] `ccvet init`: project-local by default, `--global` writes `~/.claude/settings.json`; merges into existing hooks (never overwrites), shows a diff, asks for confirmation before writing
-- [ ] `ccvet uninstall` (or `ccvet init --remove`): cleanly removes just ccvet's hook entry, leaving any other configured hooks untouched — install should be as reversible as it is easy
-- [ ] Audit log (JSONL), concurrency-safe (append mode + file lock, since multiple Claude Code sessions may run against the same project): timestamp, tool, input (or hash if sensitive), verdict, matched rule, latency
-- [ ] `ccvet gate --dry-run` mode for testing without being wired into Claude Code yet
+- [x] `ccvet init`: project-local by default, `--global` writes `~/.claude/settings.json`; merges into existing hooks (never overwrites), shows a diff, asks for confirmation before writing
+- [x] `ccvet uninstall`: cleanly removes just ccvet's hook entry, leaving any other configured hooks untouched (and drops the `hooks`/top-level key entirely if nothing's left) — round-tripped against a real scratch project, not just unit-tested
+- [x] Audit log (JSONL) at `~/.ccvet/audit.jsonl` (one consolidated log across all projects, each entry carries `cwd`), concurrency-safe via `fcntl.flock` around each append — tested with 50 concurrent threads writing simultaneously, no corrupted/merged lines. File created with `0600` permissions (verified, not assumed) since it can contain raw Bash command text. Write-tool content is hashed (`content_sha256`+`content_length`), never stored verbatim, to avoid persisting secrets into the log.
+- [x] `ccvet gate --dry-run`: evaluates and prints the decision but skips the audit-log write — verified via a real end-to-end smoke test (dangerous command denied, dry-run confirmed absent from the log; a non-dry-run safe command confirmed present)
+- [x] A failure inside `audit.log()` is swallowed, never allowed to affect the already-emitted decision or crash the hook (tested by injecting a forced `OSError`)
 
 ## Phase 3 — Config & status
 - [ ] `ccvet config get/set` (policy file path, classifier backend settings)
