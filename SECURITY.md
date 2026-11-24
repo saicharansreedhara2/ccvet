@@ -29,9 +29,12 @@ ccvet does **not** defend against:
 
 ## Known gaps
 
-- **`case` statements in Bash are not parseable by the underlying shell parser (`bashlex`).** They fall back to `ask` rather than being actively classified. This is a library limitation, not a ccvet bug, and it fails toward asking, not toward silently allowing.
+- **`case`, `select`, `coproc`, `[[ ... ]]` test expressions, and arithmetic `for ((...))` loops in Bash are not parseable by the underlying shell parser (`bashlex`).** They fall back to `ask` rather than being actively classified. This is a library limitation, not a ccvet bug, and it fails toward asking, not toward silently allowing.
+- **ANSI-C quoting (`$'...'`) around a flag argument can downgrade a hard-coded guard's result from `deny` to `ask`.** `rm $'-rf' /` is one example: bashlex mis-parses the quoted flag rather than dequoting it, so the catastrophic-rm check doesn't recognize it as `-rf`. This still fails toward asking you, never toward silently allowing the command. Ordinary single and double quotes are unaffected.
 - **Windows and PowerShell are out of scope for v1.** The rule engine targets POSIX shells (bash and zsh on macOS and Linux). This is a deliberate, stated scope decision, not an unnoticed gap.
 - **The rule engine covers Bash, file read/write tools, and a few other built-in Claude Code tools.** Third-party or future MCP tools ccvet has no rule for are deferred to Claude Code's own normal permission flow rather than auto-approved, but they are not actively classified by ccvet either.
+
+Fixed during hardening and worth naming, since they illustrate the kind of bug this project watches for: compound shell constructs (`{ ...; }`, `(...)`, `if`/`while`/`for`), process substitution (`<(...)`/`>(...)`), and the transparent wrappers `eval`/`exec`/`command`/`builtin` all used to let their wrapped command dodge classification entirely and fall through to `allow`. All four are fixed and covered by regression tests now. If you find a fifth shape like this, see "Reporting a vulnerability" below.
 
 ## Reporting a vulnerability
 

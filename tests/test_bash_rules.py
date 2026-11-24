@@ -94,6 +94,14 @@ BLOCK_CASES = [
     "if true; then rm -rf /; fi",
     "while true; do rm -rf /; done",
     "for x in 1; do rm -rf /; done",
+    # Process substitution and transparent wrappers (eval/exec/command/
+    # builtin) - a second round of real bugs found during the same
+    # adversarial pass as the compound-construct bug above.
+    "cat <(rm -rf /)",
+    'eval "rm -rf /"',
+    "exec rm -rf /",
+    "command rm -rf /",
+    "builtin rm -rf /",
 ]
 
 
@@ -155,6 +163,46 @@ def test_empty_command_is_allowed():
 def test_unparsable_command_is_asked_not_allowed():
     verdict = evaluate("echo 'unterminated")
     assert verdict.decision == "ask"
+
+
+def test_process_substitution_with_safe_content_still_allows():
+    assert evaluate("cat <(ls -la)").decision == "allow"
+
+
+def test_eval_with_safe_content_still_allows():
+    assert evaluate('eval "ls -la"').decision == "allow"
+
+
+def test_eval_with_unparseable_content_asks():
+    verdict = evaluate("eval \"'unterminated\"")
+    assert verdict.decision == "ask"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "select x in a; do rm -rf /; done",
+        "coproc rm -rf /",
+        "[[ -f /tmp/x ]] && rm -rf /",
+        "for ((i=0;i<1;i++)); do rm -rf /; done",
+    ],
+)
+def test_constructs_bashlex_cannot_parse_fail_safe_to_ask_not_allow(command):
+    # bashlex has no support for select/coproc/[[ ]]/arithmetic-for at
+    # all (confirmed: these all raise inside bashlex.parse itself). This
+    # is a known, documented limitation, not fixable in ccvet's own code -
+    # the only requirement is that it fails toward "ask", never "allow".
+    assert evaluate(command).decision == "ask"
+
+
+def test_ansi_c_quoted_flag_is_a_known_limitation_but_fails_safe():
+    # bashlex mis-parses `$'-rf'` (ANSI-C quoting) rather than dequoting
+    # it to the literal "-rf", so the catastrophic-rm flag check doesn't
+    # recognize it and this downgrades from deny to ask instead of being
+    # silently allowed. Documented in SECURITY.md; this test just pins
+    # that the failure mode stays on the safe side.
+    verdict = evaluate("rm $'-rf' /")
+    assert verdict.decision in {"ask", "deny"}
 
 
 def test_noop_builtin_inside_a_group_does_not_crash():

@@ -78,3 +78,19 @@ def test_compound_constructs_do_not_bypass_extraction(command):
 def test_brace_group_with_only_safe_commands_is_not_falsely_flagged():
     commands = shell.extract_simple_commands("{ ls -la; }")
     assert [argv for argv, _ in commands] == [["ls", "-la"]]
+
+
+# Regression tests for a second, related bug found during the same
+# adversarial pass: process substitution `<(...)`/`>(...)` is structured
+# like command substitution (a `.command` attribute, not `.parts`), but
+# under a different node kind ("processsubstitution"), which was missing
+# from the same special-case check that command substitution already had.
+def test_process_substitution_is_extracted():
+    extracted_argvs = [argv for argv, _dynamic in shell.extract_simple_commands("cat <(rm -rf /)")]
+    assert ["rm", "-rf", "/"] in extracted_argvs
+
+
+def test_process_substitution_with_only_safe_commands_is_not_falsely_flagged():
+    commands = shell.extract_simple_commands("cat <(ls -la)")
+    argvs = [argv for argv, _ in commands]
+    assert ["ls", "-la"] in argvs

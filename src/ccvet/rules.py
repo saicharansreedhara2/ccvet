@@ -128,6 +128,32 @@ def classify_argv(argv):
     if program in {"sudo", "doas"}:
         return Verdict.deny(f"{program} escalates privileges")
 
+    # `exec`/`command`/`builtin` pass their remaining words straight
+    # through as the real command (bashlex has already split them into
+    # argv), so just reclassify the rest directly: `exec rm -rf /` must
+    # not be treated as a harmless, unrecognized `exec` call.
+    if program in {"exec", "command", "builtin"} and args:
+        return classify_argv(args)
+
+    # `eval` is different: it concatenates its own arguments into a
+    # single string and re-interprets *that* as shell syntax, so the
+    # inner command needs to go back through the real parser, not just
+    # be sliced off like exec/command/builtin above. Without this,
+    # `eval "rm -rf /"` fell to "unrecognized command `eval`", an ask,
+    # instead of being recognized as equivalent to running the command
+    # directly.
+    if program == "eval" and args:
+        from . import shell
+
+        joined = " ".join(args)
+        inner_commands = shell.extract_simple_commands(joined)
+        inner_verdicts = [classify_argv(a) for a, _dynamic in (inner_commands or []) if a]
+        if inner_verdicts:
+            from .verdict import most_severe
+
+            return most_severe(inner_verdicts)
+        return Verdict.ask(f"eval with unparseable or empty content: {joined!r}")
+
     if program == "rm" and _is_catastrophic_rm(args):
         return Verdict.deny(f"rm with recursive+force flags targeting {args!r} is catastrophic")
 

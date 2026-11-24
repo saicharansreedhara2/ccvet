@@ -26,7 +26,12 @@ def _children(node):
 
 def _collect(node, out):
     kind = getattr(node, "kind", None)
-    if kind == "commandsubstitution":
+    if kind in ("commandsubstitution", "processsubstitution"):
+        # $(...) and <(...)/>(...) both expose the embedded command via
+        # `.command`, not `.parts`. `cat <(rm -rf /)` was extracting to
+        # just `cat` with the process substitution as a literal, unparsed
+        # string in its argv, allowing straight through on `cat`'s
+        # allowlist entry without the embedded `rm -rf /` ever being seen.
         _collect(node.command, out)
         return
     if kind == "command":
