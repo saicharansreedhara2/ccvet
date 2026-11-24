@@ -89,10 +89,10 @@ Fixed in `shell.py` (`_children()` now checks both `.parts` and `.list`). Verifi
 - [x] LICENSE: MIT
 - [x] No em dashes anywhere in user-facing text: README, SECURITY.md, CONTRIBUTING.md, the Docs/ folder, CLI help strings, and every `Verdict` reason string. Docstrings and inline code comments are exempt by the project's own standing style rule.
 - [x] pyproject.toml polished for PyPI discoverability: expanded description, a `keywords` list (claude-code, pretooluse, permission-hook, auto-approve, risk-classifier, security, guardrails, ollama, lm-studio, and so on), added Topic/Intended Audience classifiers, and Repository/Issues URLs
-- [ ] Supply-chain hygiene for ccvet's own release: pinned dependencies, PyPI trusted publishing from GitHub Actions (no long-lived PyPI tokens sitting in repo secrets)
-- [ ] Push repo to https://github.com/saicharansreedhara2/ccvet (and set the GitHub repo's own description/topics for discoverability there too)
-- [ ] PyPI packaging and first publish (`ccvet`; process reference only from nrchd's release setup, no shared code)
-- [ ] Release automation (version bump plus a GitHub Action to publish on tag, if nrchd's workflow pattern fits)
+- [x] Supply-chain hygiene for ccvet's own release: `.github/workflows/test.yml` (CI across Python 3.9 through 3.13 on every push/PR) and `.github/workflows/publish.yml` (builds on a `v*` tag, publishes via PyPI trusted publishing/OIDC, zero stored API tokens). GitHub Action versions pinned to specific tags (`actions/checkout@v4`, etc.), not `@main`. Verified both workflow YAML files parse and that `python -m build` produces a clean sdist and wheel, exactly what the publish job runs.
+- [ ] Push repo to https://github.com/saicharansreedhara2/ccvet (and set the GitHub repo's own description/topics for discoverability there too). **Blocked on user confirmation** since this is a visible, hard-to-reverse action.
+- [ ] PyPI packaging and first publish (`ccvet`). **Blocked on a manual step only the user can do**: configuring a "pending trusted publisher" on PyPI's own site for the `ccvet` project name, pointing at this repo and the `publish.yml` workflow, before any tag push will actually succeed.
+- [x] Release automation: `publish.yml` publishes on any `v*` tag push. Version bump itself (editing `pyproject.toml`'s `version` field before tagging) stays manual, which is normal for a project this size.
 
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
