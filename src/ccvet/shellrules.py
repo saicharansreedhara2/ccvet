@@ -4,7 +4,7 @@ for credential-path references across the whole command, then classify
 each extracted sub-command individually and take the most severe result.
 """
 
-from . import rules, shell, sql_guard, userpolicy
+from . import classifier, rules, shell, sql_guard, userpolicy
 from .verdict import Verdict, most_severe
 
 
@@ -38,5 +38,9 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
         override = userpolicy.find_override(command, cwd)
         if override is not None:
             return override
+
+        classifier_verdict = classifier.classify(command)
+        if classifier_verdict is not None:
+            return classifier_verdict
 
     return verdict

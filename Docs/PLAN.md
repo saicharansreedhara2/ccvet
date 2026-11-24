@@ -53,12 +53,16 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 **Bug caught by integration testing, not unit testing**: the `check` subcommand's positional argument was named `command`, colliding with the top-level `argparse` subparsers' `dest="command"` — both write into the same flat `Namespace`, so `ccvet check "docker build ."` silently set `args.command` to the command text instead of `"check"`, and the whole dispatch fell through to the help text. The `test_commands.py` tests didn't catch this because they hand-built `argparse.Namespace` objects directly, bypassing real parsing. Fixed by renaming the positional to `shell_command`, and added `test_cli.py` to parse real argv for every subcommand going forward.
 
-## Phase 4 — Layer 2 (optional LLM gray-zone classifier)
-- [ ] OpenAI-compatible client, configurable `base_url`/`model`/`api_key` — covers Ollama/LM Studio/vLLM/mtplx uniformly
-- [ ] Forced structured JSON output (`risk`, `reversible`, `blast_radius`, `rationale`) with schema validation
-- [ ] Explicit timeout budget (e.g. 5s, comfortably under the hook timeout confirmed in Phase 0.5) — timeout/error/malformed-output all fail safe to `ask`, never `allow`
-- [ ] Prompt hardening: tool input fenced explicitly as data, not instructions (anti prompt-injection)
-- [ ] `ccvet init` auto-detects a running local server (Ollama `:11434`, LM Studio `:1234`) and offers to wire it in
+## Phase 4 — Layer 2 (optional LLM gray-zone classifier) — DONE 2026-11-24
+- [x] OpenAI-compatible client (`classifier.py`), configurable `classifier.base_url`/`model`/`api_key`/`timeout_seconds` via `ccvet config` — covers Ollama/LM Studio/vLLM/mtplx uniformly since they all speak the same `/chat/completions` shape. Uses stdlib `urllib`, not an SDK — zero added dependency for people who never enable Layer 2.
+- [x] Forced structured JSON output (`risk`/`reversible`/`blast_radius`/`rationale`) via `response_format: json_object` plus a tolerant regex fallback extraction, with field-value validation (invalid enum values, non-bool `reversible`, etc. all treated as failure)
+- [x] Explicit timeout (`classifier.timeout_seconds`, default 8s) — bumped the hook's own handler timeout from 10s to 20s (`HOOK_TIMEOUT_SECONDS` in `init.py`) to leave real room for a slow local model, since the Phase 0.5 finding was that a hook timeout fails open to normal permission flow rather than blocking, so a generous ceiling costs nothing on the fast (Layer 0/1-only) path and only helps the slow path
+- [x] Prompt hardening: the command is fenced under an explicit "COMMAND TO EVALUATE" heading with instructions to treat it as data, not instructions, even if its text tries to address the model directly — tested with an actual prompt-injection-shaped string
+- [x] `ccvet init` auto-detects a running local server (Ollama `:11434`, LM Studio `:1234`) via a 0.5s-timeout probe and offers to wire it in as `classifier.base_url` — skips the prompt if already configured, silent no-op if nothing's running (verified in this sandbox, which has neither server running, that `ccvet init` doesn't error or hang)
+- [x] **Deliberate asymmetry, matching the `overridable` invariant from Phase 3**: the classifier can only turn an `ask` into an `allow`, never into a `deny` — Layer 0's hard-coded guards keep exclusive denial authority, so a hallucinating or misbehaving local model can't unilaterally block the agent. Verified end-to-end that Layer 2 is never even consulted for a non-overridable verdict (`rm -rf /` stays denied regardless of classifier config).
+- [x] Any failure path (disabled, timeout, transport error, malformed/invalid JSON) returns `None` from `classify()`, meaning "no opinion" — the caller falls back to the original gray-zone `ask`, never defaults to `allow` on uncertainty
+- [x] Verified end-to-end with a real (unreachable) `classifier.base_url` configured: `ccvet gate` degrades to `ask` quickly (connection refused, no hang) rather than timing out or crashing
+- [x] 20 new tests (`test_classifier.py`, `test_shellrules_layer2.py`, `test_init_layer2.py`) — 150 total passing
 
 ## Phase 5 — Testing & hardening
 - [ ] Golden test suite: full taxonomy table → expected verdict, run in CI

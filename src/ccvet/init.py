@@ -7,9 +7,24 @@ less invasive merge that preserves the rest of the file's formatting.
 """
 
 import json
+import urllib.error
+import urllib.request
 from pathlib import Path
 
+from . import config
+
 HOOK_COMMAND = "ccvet gate"
+# Generous relative to Layer 0/1 (sub-millisecond), to leave room for an
+# optional Layer 2 LLM call on a slow local model. If a hook invocation
+# does blow through this, PreToolUse fails open to the normal permission
+# flow rather than blocking the tool call (see Docs/hook-contract.md) -
+# the cost of a too-tight timeout here is degraded UX, not a safety gap.
+HOOK_TIMEOUT_SECONDS = 20
+
+LOCAL_SERVER_CANDIDATES = [
+    ("Ollama", "http://localhost:11434/v1"),
+    ("LM Studio", "http://localhost:1234/v1"),
+]
 
 
 def settings_path(use_global: bool) -> Path:
@@ -38,12 +53,47 @@ def merge(settings: dict) -> dict:
     pre_tool_use.append(
         {
             "matcher": "*",
-            "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": 10}],
+            "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": HOOK_TIMEOUT_SECONDS}],
         }
     )
     hooks["PreToolUse"] = pre_tool_use
     settings["hooks"] = hooks
     return settings
+
+
+def _probe(base_url: str) -> bool:
+    try:
+        urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=0.5)
+        return True
+    except urllib.error.HTTPError:
+        return True  # reachable and speaking HTTP at all is enough; auth/404 is fine
+    except Exception:
+        return False
+
+
+def detect_local_server():
+    for name, base_url in LOCAL_SERVER_CANDIDATES:
+        if _probe(base_url):
+            return name, base_url
+    return None
+
+
+def offer_layer2_setup(assume_yes: bool = False) -> None:
+    if config.get("classifier.base_url"):
+        return  # already configured, don't re-prompt every init
+
+    found = detect_local_server()
+    if not found:
+        return
+
+    name, base_url = found
+    print(f"\nDetected a local model server ({name}) at {base_url}.")
+    if not assume_yes:
+        reply = input(f"Use it as ccvet's optional Layer 2 classifier? [y/N] ").strip().lower()
+        if reply != "y":
+            return
+    config.set("classifier.base_url", base_url)
+    print(f"Set classifier.base_url = {base_url}. Set classifier.model with `ccvet config set classifier.model <name>`.")
 
 
 def run(use_global: bool = False, assume_yes: bool = False) -> int:
@@ -56,6 +106,7 @@ def run(use_global: bool = False, assume_yes: bool = False) -> int:
 
     if before_text == after_text:
         print(f"ccvet is already wired into {path} — nothing to do.")
+        offer_layer2_setup(assume_yes=assume_yes)
         return 0
 
     print(f"About to write {path}:")
@@ -73,6 +124,7 @@ def run(use_global: bool = False, assume_yes: bool = False) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(after, indent=2) + "\n")
     print(f"Wired ccvet into {path}")
+    offer_layer2_setup(assume_yes=assume_yes)
     return 0
 
 
