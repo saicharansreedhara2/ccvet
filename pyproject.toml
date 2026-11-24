@@ -21,7 +21,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/TBD/ccvet"
+Homepage = "https://github.com/saicharansreedhara2/ccvet"
 
 [project.scripts]
 ccvet = "ccvet.cli:main"
