@@ -64,12 +64,23 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] Verified end-to-end with a real (unreachable) `classifier.base_url` configured: `ccvet gate` degrades to `ask` quickly (connection refused, no hang) rather than timing out or crashing
 - [x] 20 new tests (`test_classifier.py`, `test_shellrules_layer2.py`, `test_init_layer2.py`) — 150 total passing
 
-## Phase 5 — Testing & hardening
-- [ ] Golden test suite: full taxonomy table → expected verdict, run in CI
-- [ ] Edge-case tests: obfuscated destructive commands, compound commands (`safe_cmd && dangerous_cmd`), path traversal into `~/.ssh` via relative paths and symlinks
-- [ ] Confirm BLOCK tier is truly unoverridable by a Layer 2 verdict (test a mocked LLM that returns "low risk" for a BLOCK-listed command — must still block)
-- [ ] Crash-safety tests: feed the engine malformed/truncated hook JSON, confirm it still degrades to `ask` rather than raising
-- [ ] Concurrency test: two simultaneous `ccvet gate` invocations writing to the same audit log don't corrupt it
+## Phase 5 — Testing & hardening — DONE 2026-11-24
+
+### Critical finding: compound shell constructs bypassed classification entirely
+While adding edge-case tests, found that **`{ rm -rf /; }`, `(rm -rf /)`, `if true; then rm -rf /; fi`, `while`, and `for` loops all evaluated to `allow`** instead of being classified at all. Root cause: bashlex represents brace groups, subshells, and the wrapper around if/while/for/until as a `CompoundNode` exposing its children through a `.list` attribute — every other node kind uses `.parts`, which is the only attribute `shell.py`'s extraction walker checked. The compound wrapper's children were silently never visited, `extract_simple_commands()` returned an empty list, and `shellrules.evaluate()`'s "no commands found" fallback is `allow("empty command")` — turning "nothing to classify" into "nothing dangerous found" for an entire class of shell syntax. This was a real classification bypass, not a cosmetic gap, and a determined adversary (or just an agent wrapping a command in `{ ...; }` for unrelated reasons) could have walked straight through Layer 0's hard-coded guards.
+
+Fixed in `shell.py` (`_children()` now checks both `.parts` and `.list`); verified against all five constructs plus confirmed a benign brace group (`{ ls -la; }`) still correctly allows. Permanent regression tests added at both the extraction level (`test_shell.py`) and the full end-to-end taxonomy table (`test_bash_rules.py`'s `BLOCK_CASES`), so this can't silently regress. `case` statements remain unparseable by bashlex entirely (a bashlex limitation, not fixable here) and fall to `ask`, not `allow` — safe, just not actively classified; documented as a known gap rather than silently missing.
+
+**This is exactly the kind of bug a hardening pass exists to find** — worth flagging to the user prominently, not just logging in this file.
+
+### Rest of the pass
+- [x] Golden test suite: full taxonomy table → expected verdict (was already built in Phase 1, extended here with the compound-construct cases above)
+- [x] Edge-case tests: compound safe-then-dangerous and dangerous-then-safe (`ls -la && rm -rf /`, `sudo rm -rf /var && git status` — most_severe correctly picks the dangerous half either way); relative `../`-traversal into a credential path and outside the project root (distinct from the symlink case already covered in Phase 1)
+- [x] Confirmed BLOCK tier is unoverridable by Layer 2 two ways: the existing decision-level check, plus a new spy-based test (`test_layer2_is_never_even_called_for_a_non_overridable_verdict`) proving the classifier function is structurally never invoked at all for `rm -rf /`, `sudo`, `git push --force`, `terraform destroy` — stronger than checking the final answer, since it also rules out "got asked and got ignored by luck"
+- [x] Crash-safety tests: truncated JSON, `tool_input` as the wrong type (string/null), top-level JSON array instead of object, missing `cwd` entirely — all degrade to `ask` (or a sane default), never raise
+- [x] Concurrency: in addition to the existing 50-thread same-process test (Phase 2), added a real **20-subprocess** test — actual separate `ccvet gate` OS processes, not threads, each with its own isolated `HOME`, all appending to the same audit log file concurrently. No corruption.
+- [x] Ran a full coverage pass (`pytest-cov`) and closed every gap worth closing: CLI dispatch for every subcommand via real `argparse` parsing (not just hand-built `Namespace` objects), `init.py`'s interactive decline paths and local-server probe branches, `userpolicy.py`'s malformed-rule and invalid-verdict-name paths, `fsrules.py`'s no-recognizable-path case, `commands.py`'s remaining branches (status with populated policy/audit data, log viewer skipping a malformed line, `policy edit`), `classifier.py`'s remaining validation branches. Ended at **99% line coverage, 212 tests**; the few lines left uncovered are deliberate (the real network call body in `classifier.py`, dead code after an intentional `SystemExit` in `cli.py`) or now-unreachable dead code made safe-but-moot by the compound-construct fix above.
+- [x] Verified the wheel still builds cleanly after all changes
 
 ## Phase 6 — Docs & release
 - [ ] README: install, quickstart, policy customization, Layer 2 setup, what each verdict tier means

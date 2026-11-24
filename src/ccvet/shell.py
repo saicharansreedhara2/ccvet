@@ -12,6 +12,18 @@ DOWNLOAD_PROGRAMS = {"curl", "wget"}
 SHELL_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
 
 
+def _children(node):
+    # CompoundNode (brace groups `{ ...; }`, subshells `(...)`, and the
+    # outer wrapper around if/while/for/until/select) exposes its children
+    # under `.list`, not `.parts`, like every other node kind. Missing
+    # this meant `{ rm -rf /; }`, `(rm -rf /)`, `if ...; then rm -rf /; fi`
+    # etc. all extracted to zero commands and silently fell through to
+    # "allow" - a real classification bypass, not just a coverage gap.
+    children = list(getattr(node, "parts", None) or [])
+    children += list(getattr(node, "list", None) or [])
+    return children
+
+
 def _collect(node, out):
     kind = getattr(node, "kind", None)
     if kind == "commandsubstitution":
@@ -22,7 +34,7 @@ def _collect(node, out):
         argv = [w.word for w in words]
         dynamic_name = bool(words) and bool(getattr(words[0], "parts", None))
         out.append((argv, dynamic_name))
-    for part in getattr(node, "parts", []):
+    for part in _children(node):
         _collect(part, out)
 
 

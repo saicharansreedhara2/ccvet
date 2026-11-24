@@ -52,3 +52,35 @@ def test_malformed_regex_in_user_policy_is_skipped_not_fatal(tmp_path):
 
 def test_no_policy_file_is_a_silent_noop(tmp_path):
     assert userpolicy.load_rules(str(tmp_path)) == []
+
+
+def test_empty_policy_file_is_a_silent_noop(tmp_path):
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("   \n")
+    assert userpolicy.load_rules(str(tmp_path)) == []
+
+
+def test_rule_with_no_match_key_is_skipped(tmp_path):
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("rules:\n  - verdict: allow\n    reason: oops, forgot match\n")
+
+    assert evaluate("docker build .", str(tmp_path)).decision == "ask"
+
+
+def test_rule_with_invalid_verdict_name_is_skipped(tmp_path):
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("rules:\n  - match: 'docker build'\n    verdict: not_a_real_verdict\n")
+
+    assert evaluate("docker build .", str(tmp_path)).decision == "ask"
+
+
+def test_add_rule_appends_to_an_existing_populated_file(tmp_path):
+    userpolicy.add_rule(r"^npm run build$", "allow", "first rule", use_global=False, cwd=str(tmp_path))
+    userpolicy.add_rule(r"^docker build \.$", "allow", "second rule", use_global=False, cwd=str(tmp_path))
+
+    rules = userpolicy._load_file(userpolicy.project_path(str(tmp_path)))
+    assert len(rules) == 2
+    assert {r["reason"] for r in rules} == {"first rule", "second rule"}

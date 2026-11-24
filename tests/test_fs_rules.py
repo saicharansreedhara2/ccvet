@@ -42,6 +42,12 @@ def test_read_credential_path_is_denied(tmp_path):
     assert verdict.decision == "deny"
 
 
+def test_write_with_no_recognizable_path_field_asks_rather_than_crashes(tmp_path):
+    verdict = evaluate("Write", {"content": "hello"}, str(tmp_path))
+    assert verdict.decision == "ask"
+    assert "no recognizable path" in verdict.reason
+
+
 def test_write_to_package_manifest_asks(tmp_path):
     pkg = tmp_path / "package.json"
     verdict = evaluate("Write", {"file_path": str(pkg)}, str(tmp_path))
@@ -54,6 +60,35 @@ def test_write_to_ci_workflow_asks(tmp_path):
     workflow_dir.mkdir(parents=True)
     verdict = evaluate("Edit", {"file_path": str(workflow_dir / "ci.yml")}, str(tmp_path))
     assert verdict.decision == "ask"
+
+
+def test_relative_dotdot_traversal_to_credential_path_is_denied(tmp_path):
+    # Not a symlink this time - just a "../../.ssh/id_rsa"-shaped relative
+    # path handed to the tool, which must resolve against cwd and still
+    # hit the credential-path check rather than being treated as a benign
+    # in-project relative path.
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir(exist_ok=True)
+    (ssh_dir / "id_rsa").write_text("fake key")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    relative = "../.ssh/id_rsa"
+
+    verdict = evaluate("Read", {"file_path": relative}, str(project))
+    assert verdict.decision == "deny"
+
+
+def test_relative_dotdot_traversal_outside_project_root_is_denied(tmp_path):
+    sibling = tmp_path.parent / "sibling_outside"
+    sibling.mkdir(exist_ok=True)
+    (sibling / "notes.txt").write_text("x")
+
+    project = tmp_path / "project2"
+    project.mkdir()
+
+    verdict = evaluate("Write", {"file_path": "../sibling_outside/notes.txt"}, str(project))
+    assert verdict.decision == "deny"
 
 
 def test_symlink_traversal_outside_root_is_denied(tmp_path):

@@ -1,3 +1,5 @@
+import urllib.error
+
 from ccvet import config, init
 
 
@@ -43,3 +45,41 @@ def test_offer_layer2_setup_noop_when_nothing_detected(tmp_path, monkeypatch, ca
 
     assert config.get("classifier.base_url") is None
     assert capsys.readouterr().out == ""
+
+
+def test_offer_layer2_setup_declines_when_user_says_no(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(init, "detect_local_server", lambda: ("Ollama", "http://localhost:11434/v1"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+
+    init.offer_layer2_setup(assume_yes=False)
+
+    assert config.get("classifier.base_url") is None
+
+
+def test_probe_treats_http_error_as_reachable(monkeypatch):
+    def raise_http_error(*a, **k):
+        raise urllib.error.HTTPError("http://x", 404, "not found", {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
+    assert init._probe("http://localhost:11434/v1") is True
+
+
+def test_probe_returns_true_on_a_clean_response(monkeypatch):
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _FakeResponse())
+    assert init._probe("http://localhost:11434/v1") is True
+
+
+def test_probe_treats_connection_refused_as_unreachable(monkeypatch):
+    def raise_connection_error(*a, **k):
+        raise ConnectionRefusedError("nope")
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_connection_error)
+    assert init._probe("http://localhost:19999/v1") is False

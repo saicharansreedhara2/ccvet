@@ -40,6 +40,39 @@ def test_malformed_json_falls_back_to_ask_not_defer():
     assert response["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
+def test_truncated_json_falls_back_to_ask():
+    truncated = '{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_inp'
+    response = gate.build_response(truncated)
+    assert response["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_tool_input_as_wrong_type_does_not_crash():
+    # A string instead of an object - engine.evaluate's tool_input.get()
+    # calls would raise AttributeError on a plain str; must still produce
+    # a valid decision, not a traceback.
+    payload = json.dumps({"tool_name": "Bash", "tool_input": "not-a-dict", "cwd": "/tmp"})
+    response = gate.build_response(payload)
+    assert response["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_tool_input_null_is_treated_as_empty_dict():
+    payload = json.dumps({"tool_name": "Bash", "tool_input": None, "cwd": "/tmp"})
+    response = gate.build_response(payload)
+    # command defaults to "" -> empty command -> allow, not a crash
+    assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
+def test_top_level_json_array_instead_of_object_does_not_crash():
+    response = gate.build_response("[1, 2, 3]")
+    assert response["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_cwd_missing_entirely_does_not_crash():
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}})
+    response = gate.build_response(payload)
+    assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
 def test_run_writes_an_audit_log_entry(monkeypatch):
     calls = []
     monkeypatch.setattr(audit, "log", lambda *a, **k: calls.append(a))

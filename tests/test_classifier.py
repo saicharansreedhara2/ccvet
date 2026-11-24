@@ -57,11 +57,35 @@ def test_classify_returns_none_on_malformed_response(tmp_path, monkeypatch):
     assert classifier.classify("x") is None
 
 
-def test_classify_returns_none_on_invalid_field_values(tmp_path, monkeypatch):
+def test_classify_returns_none_on_invalid_risk_value(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
     config.set("classifier.base_url", "http://localhost:11434/v1")
     monkeypatch.setattr(
         classifier, "_call_llm", lambda *a, **k: '{"risk": "extreme", "reversible": true, "blast_radius": "local"}'
+    )
+
+    assert classifier.classify("x") is None
+
+
+def test_classify_returns_none_on_invalid_blast_radius_value(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    config.set("classifier.base_url", "http://localhost:11434/v1")
+    monkeypatch.setattr(
+        classifier,
+        "_call_llm",
+        lambda *a, **k: '{"risk": "low", "reversible": true, "blast_radius": "outer space"}',
+    )
+
+    assert classifier.classify("x") is None
+
+
+def test_classify_returns_none_on_non_boolean_reversible_value(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    config.set("classifier.base_url", "http://localhost:11434/v1")
+    monkeypatch.setattr(
+        classifier,
+        "_call_llm",
+        lambda *a, **k: '{"risk": "low", "reversible": "yes", "blast_radius": "local"}',
     )
 
     assert classifier.classify("x") is None

@@ -90,6 +90,7 @@ The taxonomy above is shell-command-centric, but `PreToolUse` fires for every to
 
 ## Scope notes
 - **POSIX shells only for v1.** The taxonomy above targets bash/zsh on macOS/Linux. Windows/PowerShell equivalents (`Remove-Item -Recurse -Force`, `Format-Volume`, `icacls`, `Start-Process -Verb RunAs`) are a deliberate non-goal for the first release, not an oversight — call this out in the README rather than silently under-covering it.
+- **`case` statements aren't parseable by bashlex at all** (a library limitation, not something fixable in ccvet's own code) — a bash `case ... esac` block falls to `ask` ("could not parse as shell syntax"), not `allow`. Safe, just not actively classified; noted here rather than silently missing. All other compound constructs (brace groups `{ ...; }`, subshells `(...)`, `if`/`while`/`for`) parse correctly and are fully classified as of the Phase 5 hardening fix.
 
 ## What stays GRAY on purpose
 Anything that's a mutating action with no clean pattern match — a novel one-off shell one-liner, an unfamiliar CLI tool, a script whose contents weren't inspected. These are exactly what Layer 2 is for; without Layer 2 configured they fall back to ASK, never AUTO.

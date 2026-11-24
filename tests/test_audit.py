@@ -38,6 +38,36 @@ def test_log_redacts_write_content_as_hash_not_plaintext(tmp_path, monkeypatch):
     assert entry["input"]["content_length"] == len("API_KEY=super-secret-value")
 
 
+def test_log_summarizes_read_tools_by_path_only(tmp_path, monkeypatch):
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+
+    audit.log("Grep", {"pattern": "TODO", "path": "/tmp/project"}, "/tmp/project", Verdict.allow("grep is fine"), 0.1)
+
+    entry = json.loads(log_path.read_text().strip())
+    assert entry["input"] == {"path": "/tmp/project"}
+
+
+def test_log_summarizes_webfetch_by_url(tmp_path, monkeypatch):
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+
+    audit.log("WebFetch", {"url": "https://example.com"}, "/tmp", Verdict.ask("webfetch"), 0.1)
+
+    entry = json.loads(log_path.read_text().strip())
+    assert entry["input"] == {"url": "https://example.com"}
+
+
+def test_log_summarizes_unknown_tool_by_input_keys(tmp_path, monkeypatch):
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+
+    audit.log("SomeMCPTool", {"foo": 1, "bar": 2}, "/tmp", Verdict.defer("unknown tool"), 0.1)
+
+    entry = json.loads(log_path.read_text().strip())
+    assert entry["input"] == {"input_keys": ["bar", "foo"]}
+
+
 def test_log_file_created_with_restrictive_permissions(tmp_path, monkeypatch):
     log_path = tmp_path / "nested" / "audit.jsonl"
     monkeypatch.setattr(audit, "LOG_PATH", log_path)
