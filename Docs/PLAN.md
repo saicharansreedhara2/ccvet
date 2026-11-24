@@ -1,6 +1,6 @@
 # ccvet — Implementation Plan
 
-Risk-classifying `PreToolUse` gate for Claude Code. Public repo on mortalapps GitHub, published to PyPI as `pip3 install ccvet`. Layer 0/1 (rules + heuristics) must fully work with zero model configured; Layer 2 (LLM) is opt-in for the gray zone only. See `risk-taxonomy.md` for the full command classification that backs Phase 1.
+Risk-classifying `PreToolUse` gate for Claude Code. Public repo on a separate (non-mortalapps) GitHub account — TBD, user will share which one — published to PyPI as `pip3 install ccvet`. Layer 0/1 (rules + heuristics) must fully work with zero model configured; Layer 2 (LLM) is opt-in for the gray zone only. See `risk-taxonomy.md` for the full command classification that backs Phase 1.
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
@@ -10,7 +10,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] Minimal `pyproject.toml` (build backend, metadata, `entry_points`)
 - [x] Keep runtime deps minimal and imports lazy — `gate`/`init` modules are imported inside the CLI dispatch functions, not at module load time; zero runtime dependencies so far
 - [x] `pip install -e .` + `ccvet --version` smoke test (venv at `.venv/`, gitignored)
-- [x] Git init, first commit — staying local, not pushed to mortalapps GitHub until Phase 6
+- [x] Git init, first commit — staying local, not pushed anywhere until Phase 6 (target GitHub account TBD, not mortalapps — user will share which account to use)
 
 ## Phase 0.5 — Spike: verify the actual Claude Code hook contract
 - [x] Confirmed exact `PreToolUse` stdin JSON shape against current docs (`code.claude.com/docs/en/hooks`) — see `Docs/hook-contract.md`
@@ -73,7 +73,7 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [ ] CONTRIBUTING.md: how the community proposes new taxonomy rules (PR template: command/pattern → proposed verdict → rationale)
 - [ ] LICENSE: MIT
 - [ ] Supply-chain hygiene for ccvet's own release: pinned dependencies, PyPI trusted publishing from GitHub Actions (no long-lived PyPI tokens sitting in repo secrets)
-- [ ] Push repo to mortalapps GitHub org
+- [ ] Push repo to GitHub — account TBD (not mortalapps; user will share the account to use)
 - [ ] PyPI packaging + first publish (`ccvet` — process reference only from nrchd's release setup, no shared code)
 - [ ] Release automation (version bump + GitHub Action to publish on tag, if nrchd's workflow pattern fits)
 
