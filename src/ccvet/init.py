@@ -105,7 +105,7 @@ def run(use_global: bool = False, assume_yes: bool = False) -> int:
     after_text = json.dumps(after, indent=2, sort_keys=True)
 
     if before_text == after_text:
-        print(f"ccvet is already wired into {path} — nothing to do.")
+        print(f"ccvet is already wired into {path}, nothing to do.")
         offer_layer2_setup(assume_yes=assume_yes)
         return 0
 
@@ -135,7 +135,7 @@ def uninstall(use_global: bool = False, assume_yes: bool = False) -> int:
     remaining = [e for e in pre_tool_use if not _is_ccvet_entry(e)]
 
     if len(remaining) == len(pre_tool_use):
-        print(f"ccvet is not wired into {path} — nothing to do.")
+        print(f"ccvet is not wired into {path}, nothing to do.")
         return 0
 
     after = dict(before)

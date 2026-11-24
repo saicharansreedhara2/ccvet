@@ -34,7 +34,7 @@ class Verdict:
 
     @staticmethod
     def ask(reason: str, overridable: bool = False) -> "Verdict":
-        return Verdict("ask", f"ccvet: {reason} — escalating for your review", overridable)
+        return Verdict("ask", f"ccvet: {reason}, escalating for your review", overridable)
 
     @staticmethod
     def deny(reason: str, overridable: bool = False) -> "Verdict":

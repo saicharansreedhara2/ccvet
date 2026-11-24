@@ -5,10 +5,25 @@ build-backend = "hatchling.build"
 [project]
 name = "ccvet"
 version = "0.0.1"
-description = "A risk-classifying PreToolUse gate for Claude Code: auto-approve low-risk tool calls, block dangerous ones, ask about the rest."
+description = "A risk-classifying PreToolUse permission hook for Claude Code. Auto-approves safe commands, blocks dangerous ones, asks about the rest, with an optional local LLM for the gray zone."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
+keywords = [
+    "claude-code",
+    "claude",
+    "anthropic",
+    "pretooluse",
+    "permission-hook",
+    "auto-approve",
+    "risk-classifier",
+    "security",
+    "guardrails",
+    "llm-agent-safety",
+    "ollama",
+    "lm-studio",
+    "ai-agent-security",
+]
 dependencies = [
     "bashlex>=0.18",
     "pyyaml>=6.0",
@@ -16,12 +31,18 @@ dependencies = [
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Environment :: Console",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Utilities",
 ]
 
 [project.urls]
 Homepage = "https://github.com/saicharansreedhara2/ccvet"
+Repository = "https://github.com/saicharansreedhara2/ccvet"
+Issues = "https://github.com/saicharansreedhara2/ccvet/issues"
 
 [project.scripts]
 ccvet = "ccvet.cli:main"

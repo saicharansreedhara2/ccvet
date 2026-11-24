@@ -75,8 +75,8 @@ def pipeline_risk(commands):
             seen_decode_or_download = True
         elif program in SHELL_PROGRAMS and seen_decode_or_download:
             return Verdict.deny(
-                f"decoded or downloaded content piped into a shell ({program}) — "
-                "classic payload-execution pattern"
+                f"decoded or downloaded content piped into a shell ({program}), "
+                "a classic payload-execution pattern"
             )
     return None
 

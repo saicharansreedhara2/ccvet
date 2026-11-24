@@ -38,6 +38,6 @@ def evaluate(tool_name: str, tool_input: dict, cwd: str) -> Verdict:
         return Verdict.deny(f"{tool_name} writes outside the project root ({resolved})")
 
     if paths.matches_any(resolved, paths.MANIFEST_PATTERNS):
-        return Verdict.ask(f"{tool_name} touches a build/CI/package manifest file ({resolved}) — review before approving")
+        return Verdict.ask(f"{tool_name} touches a build/CI/package manifest file ({resolved}), review before approving")
 
     return Verdict.ask(f"{tool_name} writes to {resolved}")
