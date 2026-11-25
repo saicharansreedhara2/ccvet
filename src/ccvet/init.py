@@ -36,7 +36,14 @@ def _load(path: Path) -> dict:
     if not path.exists():
         return {}
     text = path.read_text()
-    return json.loads(text) if text.strip() else {}
+    if not text.strip():
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{path} contains invalid JSON ({exc}). Fix or remove it before running ccvet init/uninstall."
+        ) from exc
 
 
 def _is_ccvet_entry(entry: dict) -> bool:
@@ -89,7 +96,7 @@ def offer_layer2_setup(assume_yes: bool = False) -> None:
     name, base_url = found
     print(f"\nDetected a local model server ({name}) at {base_url}.")
     if not assume_yes:
-        reply = input(f"Use it as ccvet's optional Layer 2 classifier? [y/N] ").strip().lower()
+        reply = input("Use it as ccvet's optional Layer 2 classifier? [y/N] ").strip().lower()
         if reply != "y":
             return
     config.set("classifier.base_url", base_url)
@@ -98,7 +105,11 @@ def offer_layer2_setup(assume_yes: bool = False) -> None:
 
 def run(use_global: bool = False, assume_yes: bool = False) -> int:
     path = settings_path(use_global)
-    before = _load(path)
+    try:
+        before = _load(path)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
     after = merge(before)
 
     before_text = json.dumps(before, indent=2, sort_keys=True)
@@ -130,7 +141,11 @@ def run(use_global: bool = False, assume_yes: bool = False) -> int:
 
 def uninstall(use_global: bool = False, assume_yes: bool = False) -> int:
     path = settings_path(use_global)
-    before = _load(path)
+    try:
+        before = _load(path)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
     pre_tool_use = before.get("hooks", {}).get("PreToolUse", [])
     remaining = [e for e in pre_tool_use if not _is_ccvet_entry(e)]
 

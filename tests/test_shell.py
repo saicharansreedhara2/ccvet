@@ -94,3 +94,35 @@ def test_process_substitution_with_only_safe_commands_is_not_falsely_flagged():
     commands = shell.extract_simple_commands("cat <(ls -la)")
     argvs = [argv for argv, _ in commands]
     assert ["ls", "-la"] in argvs
+
+
+# Regression tests for a third bug found during the same adversarial
+# pass: redirect targets (the right-hand side of `>`/`>>`/`<`/`<<<`)
+# never appeared in argv at all, so a command like `curl ... < ~/.aws/
+# credentials` or `echo ... >> ~/.bashrc` had no sensitive path visible
+# to classification anywhere.
+def test_output_redirect_target_is_extracted():
+    assert shell.extract_redirect_targets("echo hi >> ~/.bashrc") == ["~/.bashrc"]
+
+
+def test_input_redirect_target_is_extracted():
+    assert shell.extract_redirect_targets("cat < ~/.ssh/id_rsa") == ["~/.ssh/id_rsa"]
+
+
+def test_here_string_redirect_target_is_extracted():
+    assert shell.extract_redirect_targets("cmd <<< somefile") == ["somefile"]
+
+
+def test_extract_redirect_targets_returns_none_for_unparseable_input():
+    assert shell.extract_redirect_targets("echo 'unterminated") is None
+
+
+def test_fd_duplication_redirect_has_no_word_target():
+    # `2>&1` duplicates a file descriptor (an int on the wire, not a
+    # word) - must not crash and must not appear as a target.
+    assert shell.extract_redirect_targets("echo hi 2>&1") == []
+
+
+def test_redirect_inside_command_substitution_is_still_found():
+    targets = shell.extract_redirect_targets("echo $(cat < ~/.ssh/id_rsa)")
+    assert "~/.ssh/id_rsa" in targets

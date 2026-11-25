@@ -1,7 +1,8 @@
 """Evaluates a raw Bash command string end to end: parse, check pipeline-
 level obfuscation/exfil shapes, check for embedded destructive SQL, check
-for credential-path references across the whole command, then classify
-each extracted sub-command individually and take the most severe result.
+for credential-path references (both as plain arguments and as shell
+redirection targets, which never appear in argv), then classify each
+extracted sub-command individually and take the most severe result.
 """
 
 from . import classifier, rules, shell, sql_guard, userpolicy
@@ -30,6 +31,11 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
     secret_verdict = rules.secret_path_guard(all_argvs)
     if secret_verdict is not None:
         return secret_verdict
+
+    redirect_targets = shell.extract_redirect_targets(command) or []
+    redirect_verdict = rules.redirect_target_guard(redirect_targets)
+    if redirect_verdict is not None:
+        return redirect_verdict
 
     verdicts = [rules.classify_argv(argv) for argv in all_argvs]
     verdict = most_severe(verdicts)

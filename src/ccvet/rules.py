@@ -4,7 +4,9 @@ user-overridable) and run before falling back to the YAML-configurable
 AUTO/ASK program lists.
 """
 
-from . import policy
+import re
+
+from . import paths, policy
 
 _POLICY = policy.load_default()
 AUTO_PROGRAMS = set(_POLICY["auto_programs"])
@@ -23,8 +25,23 @@ NPM_AUTO_SUBCOMMANDS = {"list", "ls", "view", "show", "ping", "whoami", "outdate
 PIP_AUTO_SUBCOMMANDS = {"show", "list", "freeze", "check"}
 
 PROTECTED_BRANCHES = {"main", "master"}
-CATASTROPHIC_RM_TARGETS = {"/", "~", "$HOME", "/*", "/etc", "/usr", "/bin", "/system", "/users"}
-CATASTROPHIC_CHMOD_TARGETS = {"/", "/etc", "/usr", "/bin", "/system", "/users", "~"}
+# Top-level system directories plus bare wildcards. Originally much
+# narrower (missing /var, /opt, /Applications, /Library, /root, /sbin,
+# /boot, /private, and a bare "*"), which meant e.g. `rm -rf /var` or
+# `rm -rf *` (wipe everything in the current directory) weren't
+# recognized as catastrophic at all.
+CATASTROPHIC_RM_TARGETS = {
+    "/", "~", "$home", "/*", "*", ".*",
+    "/etc", "/usr", "/bin", "/sbin", "/system", "/users", "/home",
+    "/var", "/opt", "/applications", "/library", "/root", "/boot", "/private",
+}
+CATASTROPHIC_CHMOD_TARGETS = {
+    "/", "~",
+    "/etc", "/usr", "/bin", "/sbin", "/system", "/users", "/home",
+    "/var", "/opt", "/applications", "/library", "/root", "/boot", "/private",
+}
+
+_SYMBOLIC_CHMOD_GRANT_RE = re.compile(r"^[ugoa]*([+=])([rwxst]+)$")
 
 
 def _basename(path: str) -> str:
@@ -47,16 +64,41 @@ def _any_network_program(all_argvs) -> bool:
 
 def secret_path_guard(all_argvs):
     """Checked once per whole command (not per sub-command): specific
-    credential paths are always blocked; generic token/secret/credential
-    *names* only when paired with a network call, to avoid blocking every
-    file literally named secrets.py.
+    credential paths are always blocked and non-overridable (the exact
+    path match is precise enough to trust). The generic token/secret/
+    credential *name* heuristic, by contrast, is overridable: it's a
+    fuzzy name-based match (paired with a network call to narrow it down)
+    that can false-positive on two unrelated sub-commands that happen to
+    share a compound statement, so a user must be able to promote past it
+    once they've actually reviewed a specific case.
     """
     from .verdict import Verdict
 
     if _any_secret_arg(all_argvs, specific=True):
         return Verdict.deny("command references a credential file path (~/.ssh, ~/.aws, /etc/passwd, etc.)")
     if _any_secret_arg(all_argvs, specific=False) and _any_network_program(all_argvs):
-        return Verdict.deny("command references something named token/secret/credential alongside a network call")
+        return Verdict.deny(
+            "command references something named token/secret/credential alongside a network call",
+            overridable=True,
+        )
+    return None
+
+
+def redirect_target_guard(redirect_targets):
+    """Shell redirections (`>`, `>>`, `<`, `<<<`, ...) are invisible to
+    the per-argv checks above, since a redirect target never appears in
+    argv. Without this, `curl ... < ~/.aws/credentials` (exfiltrating a
+    credential file via input redirection) and `echo ... >> ~/.bashrc`
+    (a persistence write) were both classified with no awareness of the
+    sensitive path at all.
+    """
+    from .verdict import Verdict
+
+    for target in redirect_targets:
+        if paths.path_text_matches_any(target, paths.SECRET_PATTERNS):
+            return Verdict.deny(f"command redirects to/from a credential file path ({target})")
+        if paths.path_text_matches_any(target, paths.PERSISTENCE_PATTERNS):
+            return Verdict.deny(f"command redirects to a persistence vector ({target})")
     return None
 
 
@@ -66,18 +108,43 @@ def _normalize_target(t: str) -> str:
     return t.lower() if t == "/" else t.rstrip("/").lower()
 
 
+def _looks_like_home_directory_root(normalized_target: str) -> bool:
+    # Catches `rm -rf /Users/charan` or `/home/alice`: just as
+    # catastrophic as `rm -rf /` for that user, but the literal path
+    # isn't knowable in advance the way "/etc" or "/usr" is, so a fixed
+    # target list alone can never cover it.
+    parts = [p for p in normalized_target.split("/") if p]
+    return len(parts) == 2 and parts[0] in {"users", "home"}
+
+
+def _is_catastrophic_target(t: str) -> bool:
+    normalized = _normalize_target(t)
+    return normalized in CATASTROPHIC_RM_TARGETS or _looks_like_home_directory_root(normalized)
+
+
 def _is_catastrophic_rm(args) -> bool:
     has_recursive = any(a.startswith("-") and "r" in a.lower() for a in args)
     has_force = any(a.startswith("-") and "f" in a.lower() for a in args)
     targets = [a for a in args if not a.startswith("-")]
-    hits_catastrophic = any(_normalize_target(t) in CATASTROPHIC_RM_TARGETS for t in targets)
+    hits_catastrophic = any(_is_catastrophic_target(t) for t in targets)
     return has_recursive and has_force and (hits_catastrophic or not targets)
+
+
+def _is_full_permission_grant(mode: str) -> bool:
+    if mode in {"777", "000"}:
+        return True
+    match = _SYMBOLIC_CHMOD_GRANT_RE.match(mode)
+    if not match:
+        return False
+    op, perms = match.group(1), set(match.group(2))
+    return op in {"+", "="} and {"r", "w", "x"} <= perms
 
 
 def _is_catastrophic_chmod(args) -> bool:
     has_recursive = any(a in {"-R", "--recursive"} for a in args)
-    mode_hit = any(a in {"777", "000"} for a in args)
-    targets = [a for a in args if not a.startswith("-") and a not in {"777", "000"}]
+    non_flag_args = [a for a in args if not a.startswith("-")]
+    mode_hit = any(_is_full_permission_grant(a) for a in non_flag_args)
+    targets = [a for a in non_flag_args if not _is_full_permission_grant(a)]
     hits_catastrophic = any(_normalize_target(t) in CATASTROPHIC_CHMOD_TARGETS for t in targets)
     return has_recursive and mode_hit and hits_catastrophic
 
@@ -209,9 +276,9 @@ def classify_argv(argv):
         return Verdict.deny("kubectl delete --all/namespace is broad and destructive")
 
     if program == "find":
-        if "-delete" in args or "-exec" in args:
-            return Verdict.ask(f"find with -delete/-exec can modify or remove files ({args!r})", overridable=True)
-        return Verdict.allow("find without -delete/-exec is read-only", overridable=True)
+        if any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
+            return Verdict.ask(f"find with -delete/-exec/-execdir/-ok/-okdir can modify or remove files ({args!r})", overridable=True)
+        return Verdict.allow("find without -delete/-exec/-execdir/-ok/-okdir is read-only", overridable=True)
 
     if program in AUTO_PROGRAMS:
         return Verdict.allow(f"{program} is on the read-only allowlist", overridable=True)

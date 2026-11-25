@@ -36,6 +36,36 @@ def test_merge_preserves_other_hooks():
     assert "ccvet gate" in commands
 
 
+def test_load_treats_whitespace_only_existing_file_as_empty(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("   \n")
+    assert init._load(path) == {}
+
+
+def test_run_reports_malformed_settings_json_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text("{not valid json")
+    monkeypatch.setattr(init, "settings_path", lambda use_global: settings_path)
+
+    exit_code = init.run(use_global=False, assume_yes=True)
+
+    assert exit_code == 1
+    assert "invalid JSON" in capsys.readouterr().out
+
+
+def test_uninstall_reports_malformed_settings_json_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text("{not valid json")
+    monkeypatch.setattr(init, "settings_path", lambda use_global: settings_path)
+
+    exit_code = init.uninstall(use_global=False, assume_yes=True)
+
+    assert exit_code == 1
+    assert "invalid JSON" in capsys.readouterr().out
+
+
 def test_run_aborts_when_user_declines(tmp_path, monkeypatch, capsys):
     settings_path = tmp_path / ".claude" / "settings.json"
     monkeypatch.setattr(init, "settings_path", lambda use_global: settings_path)

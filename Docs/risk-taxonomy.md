@@ -11,9 +11,9 @@ Four verdicts:
 ## Filesystem and inspection
 | Verdict | Examples |
 |---|---|
-| AUTO | `ls`, `pwd`, `cat`, `less`, `head`, `tail`, `grep`/`rg`/`ag` (no `-exec`), `find` (no `-delete`/`-exec rm`), `file`, `stat`, `wc`, `diff`, `tree`, `du`, `df`, `which`, `type` |
+| AUTO | `ls`, `pwd`, `cat`, `less`, `head`, `tail`, `grep`/`rg`/`ag` (no `-exec`), `find` (no `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`), `file`, `stat`, `wc`, `diff`, `tree`, `du`, `df`, `which`, `type` |
 | ASK | `mkdir`, `touch`, `cp`/`mv` within project, `chmod` (non-777, within project), `ln -s`, `env` (could print secrets, so ask, not auto) |
-| BLOCK | `rm -rf /`, `rm -rf ~`, `rm -rf` with unguarded wildcard near root, `chmod -R 777 /`, `chown -R` on system paths, `dd if=... of=/dev/sdX`, `mkfs.*`, `diskutil eraseDisk` |
+| BLOCK | `rm -rf /`, `/var`, `/opt`, `/Applications`, `/Library`, `/root`, and the other top-level system directories; `rm -rf ~`, a literal `/Users/<name>` or `/home/<name>` home-directory root, or a bare `*`/`.*` wildcard; `chmod -R 777 /` (octal) or `chmod -R a+rwx /` (symbolic, same effect); `chown -R` on system paths; `dd if=... of=/dev/sdX`; `mkfs.*`; `diskutil eraseDisk` |
 
 ## Git
 | Verdict | Examples |
@@ -52,13 +52,18 @@ Four verdicts:
 ## Secrets and credentials
 | Verdict | Examples |
 |---|---|
-| BLOCK (always, regardless of read vs write) | any path under `~/.ssh/id_*`, `~/.aws/credentials`, `~/.config/gcloud`, `.env` with real secrets, `/etc/passwd`, `/etc/shadow`, anything matching `*token*`/`*secret*`/`*credential*` **combined with** a network call in the same command |
+| BLOCK (always, regardless of read vs write, including as a shell redirect target) | any path under `~/.ssh/id_*`, `~/.aws/credentials`, `~/.config/gcloud`, `.env` with real secrets, `/etc/passwd`, `/etc/shadow`, as a plain argument, as input to a command (`cat secret \| cmd`), or as a redirect target (`cmd < ~/.aws/credentials`, `cmd >> ~/.ssh/authorized_keys`) |
+| BLOCK, overridable | anything matching `*token*`/`*secret*`/`*credential*` **combined with** a network call in the same command. Fuzzy name-based matching can false-positive on two unrelated sub-commands sharing one compound statement, so unlike the exact-path match above, this one can be promoted past with `ccvet allow` once reviewed. |
+
+Path matching (both here and for Edit/Write tool calls) is component-aware, not a raw substring search on the resolved path: `/etc/passwd` matches an actual file named `passwd` inside an `etc` directory, not `/etc/passwd_notes.md`. Redirect targets (`>`, `>>`, `<`, `<<<`) are checked the same way as Edit/Write paths, since a secret or persistence path used only as a redirect target never appears in a command's argument list at all.
 
 ## Database
 | Verdict | Examples |
 |---|---|
 | ASK | `SELECT`, `INSERT`, `UPDATE ... WHERE` (scoped) |
 | BLOCK | `DROP DATABASE`/`DROP TABLE`, `TRUNCATE`, `DELETE FROM <table>` with no `WHERE`, `UPDATE` with no `WHERE` |
+
+The WHERE check is scoped to the specific DELETE/UPDATE statement (up to the next `;` or closing quote), not the whole command text, so an unrelated WHERE elsewhere in a multi-statement command (`psql -c "DELETE FROM users" -c "... WHERE ..."`) doesn't mask a genuinely unconditional delete.
 
 ## Cloud and infra CLIs
 | Verdict | Examples |

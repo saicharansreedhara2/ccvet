@@ -15,7 +15,17 @@ def _load() -> dict:
     if not CONFIG_PATH.exists():
         return {}
     text = CONFIG_PATH.read_text()
-    return (yaml.safe_load(text) or {}) if text.strip() else {}
+    if not text.strip():
+        return {}
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        # A broken config.yaml must degrade to "nothing configured", not
+        # raise - this is read on every Bash classification (to check
+        # whether Layer 2 is enabled), so an uncaught error here would
+        # force every command to the generic internal-error fallback.
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _save(data: dict) -> None:
@@ -37,7 +47,14 @@ def set(key: str, value) -> None:
     node = data
     parts = key.split(".")
     for part in parts[:-1]:
-        node = node.setdefault(part, {})
+        # setdefault(part, {}) would return the EXISTING value if one is
+        # already there, even if it's not a dict (e.g. a prior "classifier:
+        # some_string" entry) - then the next `node[...] = value` raises
+        # TypeError on a plain string. Overwrite a non-dict intermediate
+        # instead of crashing on it.
+        if not isinstance(node.get(part), dict):
+            node[part] = {}
+        node = node[part]
     node[parts[-1]] = value
     _save(data)
 

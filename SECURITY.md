@@ -24,7 +24,7 @@ ccvet assumes:
 ccvet does **not** defend against:
 
 - A fully compromised or adversarially controlled Claude Code process that bypasses the hook mechanism entirely (for example, by disabling hooks or by running commands through a path ccvet never sees).
-- Prompt injection that convinces the agent to generate a dangerous command in the first place. ccvet classifies the command once it exists; it does not prevent the agent from deciding to write one. (Its own Layer 2 prompt is hardened against the specific case of injected text trying to talk the *classifier* into approving itself, but that is a narrower claim.)
+- Prompt injection that convinces the agent to generate a dangerous command in the first place. ccvet classifies the command once it exists; it does not prevent the agent from deciding to write one. (Its own Layer 2 prompt is hardened against the specific case of injected text trying to talk the *classifier* into approving itself: the command is passed as a JSON-encoded string rather than interpolated into a markdown fence, so a command containing literal triple-backticks can't structurally break out of the "this is data" framing. That's a narrower claim than defending against injection in general.)
 - Any risk introduced by a command ccvet classifies correctly as safe, but which is genuinely safe only in some other context ccvet cannot see (for example, a command that is safe on your laptop but destructive against a shared production system you happen to be connected to).
 
 ## Known gaps
@@ -34,7 +34,15 @@ ccvet does **not** defend against:
 - **Windows and PowerShell are out of scope for v1.** The rule engine targets POSIX shells (bash and zsh on macOS and Linux). This is a deliberate, stated scope decision, not an unnoticed gap.
 - **The rule engine covers Bash, file read/write tools, and a few other built-in Claude Code tools.** Third-party or future MCP tools ccvet has no rule for are deferred to Claude Code's own normal permission flow rather than auto-approved, but they are not actively classified by ccvet either.
 
-Fixed during hardening and worth naming, since they illustrate the kind of bug this project watches for: compound shell constructs (`{ ...; }`, `(...)`, `if`/`while`/`for`), process substitution (`<(...)`/`>(...)`), and the transparent wrappers `eval`/`exec`/`command`/`builtin` all used to let their wrapped command dodge classification entirely and fall through to `allow`. All four are fixed and covered by regression tests now. If you find a fifth shape like this, see "Reporting a vulnerability" below.
+Fixed during hardening and worth naming, since they illustrate the kind of bug this project watches for:
+
+- Compound shell constructs (`{ ...; }`, `(...)`, `if`/`while`/`for`), process substitution (`<(...)`/`>(...)`), and the transparent wrappers `eval`/`exec`/`command`/`builtin` all used to let their wrapped command dodge classification entirely and fall through to `allow`.
+- **Shell redirections were completely invisible to classification.** A redirect target (the right-hand side of `>`, `>>`, `<`, `<<<`) never appears in a command's argument list, so `curl ... < ~/.aws/credentials` (exfiltrating a credential file via input redirection) or `echo ... >> ~/.bashrc` (a persistence write) had no sensitive path visible anywhere. Redirect targets are now extracted and checked the same way Edit/Write tool paths are.
+- Secret/persistence/manifest path matching used a raw substring search on the full resolved path, so `/etc/passwd` matched `/etc/passwd_notes.md`, `.bashrc` matched `my.bashrc_backup.txt`, and so on. Since the credential-path match is a hard, non-overridable deny, a false positive there couldn't even be worked around. Matching is now component-aware against the path's actual segments.
+- The catastrophic-target list for `rm -rf`/`chmod -R` was missing several top-level system directories (`/var`, `/opt`, `/Applications`, `/Library`, `/root`, and others), didn't recognize a literal home-directory root (`/Users/<name>`, `/home/<name>`) as catastrophic, didn't catch a bare `*` wildcard, and (for chmod) only recognized octal `777`/`000`, not symbolic-mode grants like `a+rwx` that achieve the same thing.
+- The DELETE/UPDATE-without-WHERE check scanned the whole command's text rather than the specific SQL statement, so a genuinely unconditional `DELETE FROM users` paired with an unrelated `WHERE` elsewhere in the same multi-statement command escaped detection.
+
+All of the above are fixed and covered by regression tests now. If you find a case like this, see "Reporting a vulnerability" below.
 
 ## Reporting a vulnerability
 

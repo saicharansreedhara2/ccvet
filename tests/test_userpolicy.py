@@ -1,3 +1,5 @@
+import pytest
+
 from ccvet import userpolicy
 from ccvet.shellrules import evaluate
 
@@ -43,8 +45,44 @@ def test_project_rule_takes_precedence_over_global_rule(tmp_path, monkeypatch):
     assert "project override" in verdict.reason
 
 
-def test_malformed_regex_in_user_policy_is_skipped_not_fatal(tmp_path):
-    _write_project_rule(tmp_path, r"[unterminated", "allow")
+def test_add_rule_rejects_an_invalid_regex_up_front():
+    with pytest.raises(ValueError, match="not a valid regex"):
+        userpolicy.add_rule(r"[unterminated", "allow", "test rule", use_global=False, cwd="/tmp")
+
+
+def test_malformed_yaml_in_policy_file_degrades_to_no_rules(tmp_path):
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("not: valid: yaml: [")
+
+    assert userpolicy.load_rules(str(tmp_path)) == []
+    assert evaluate("docker build .", str(tmp_path)).decision == "ask"
+
+
+def test_non_dict_top_level_yaml_degrades_to_no_rules(tmp_path):
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("- just\n- a\n- list\n")
+
+    assert userpolicy.load_rules(str(tmp_path)) == []
+
+
+def test_non_dict_rule_entry_is_skipped_not_fatal(tmp_path):
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("rules:\n  - just a string, not a mapping\n  - match: 'docker build'\n    verdict: ask\n")
+
+    verdict = evaluate("docker build .", str(tmp_path))
+    assert verdict.decision == "ask"
+
+
+def test_malformed_regex_from_a_hand_edited_file_is_skipped_not_fatal(tmp_path):
+    # add_rule() validates before writing, but a user can still hand-edit
+    # policy.yaml directly - that path must stay safe too.
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text("rules:\n  - match: '[unterminated'\n    verdict: allow\n")
+
     # must not raise, and must fall through to the normal built-in verdict
     verdict = evaluate("docker build .", str(tmp_path))
     assert verdict.decision == "ask"

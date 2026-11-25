@@ -109,6 +109,64 @@ def test_log_view_with_no_log_file(tmp_path, monkeypatch, capsys):
     assert "No audit log entries" in capsys.readouterr().out
 
 
+def test_allow_reports_invalid_regex_instead_of_writing_a_dead_rule(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    rc = commands.allow(_ns(pattern="[unterminated", regex=True, verdict="allow", global_=False, reason=None))
+    assert rc == 1
+    assert "not a valid regex" in capsys.readouterr().err
+    assert not (tmp_path / ".ccvet" / "policy.yaml").exists()
+
+
+def test_policy_edit_handles_a_missing_editor_gracefully(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EDITOR", "this-editor-does-not-exist-12345")
+    rc = commands.policy_edit(_ns(global_=False))
+    assert rc == 1
+    assert "Could not launch editor" in capsys.readouterr().err
+
+
+def test_log_view_survives_an_entry_missing_expected_keys(tmp_path, monkeypatch, capsys):
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+    from ccvet.verdict import Verdict
+    audit.log("Bash", {"command": "ls"}, "/tmp", Verdict.allow("ls is fine"), 0.1)
+    with open(log_path, "a") as f:
+        f.write('{"this": "has none of the expected fields"}\n')
+
+    rc = commands.log_view(_ns(tail=20))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ls is fine" in out
+
+
+def test_log_view_negative_tail_shows_all_instead_of_weird_slice(tmp_path, monkeypatch, capsys):
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+    from ccvet.verdict import Verdict
+    for i in range(3):
+        audit.log("Bash", {"command": f"echo {i}"}, "/tmp", Verdict.allow(f"echo {i}"), 0.1)
+
+    commands.log_view(_ns(tail=-5))
+    out = capsys.readouterr().out
+    assert out.count("echo 0") == 1
+    assert out.count("echo 1") == 1
+    assert out.count("echo 2") == 1
+
+
+def test_status_handles_malformed_settings_json(tmp_path, monkeypatch, capsys):
+    bad_settings = tmp_path / "bad_settings.json"
+    bad_settings.write_text("{not valid json")
+    monkeypatch.setattr(init, "settings_path", lambda use_global: bad_settings)
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "invalid JSON" in out
+
+
 def test_allow_writes_an_escaped_literal_rule(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     commands.allow(_ns(pattern="docker build .", regex=False, verdict="allow", global_=False, reason=None))

@@ -60,6 +60,45 @@ def extract_simple_commands(command: str):
     return out
 
 
+def _collect_redirect_targets(node, out):
+    kind = getattr(node, "kind", None)
+    if kind in ("commandsubstitution", "processsubstitution"):
+        _collect_redirect_targets(node.command, out)
+        return
+    if kind == "command":
+        for part in node.parts:
+            if getattr(part, "kind", None) != "redirect":
+                continue
+            target = getattr(part, "output", None)
+            if getattr(target, "kind", None) == "word":
+                out.append(target.word)
+    for part in _children(node):
+        _collect_redirect_targets(part, out)
+
+
+def extract_redirect_targets(command: str):
+    """Returns a flat list of every redirection target (the right-hand
+    side of `>`, `>>`, `<`, `<<<`, ...) found anywhere in the parse tree,
+    or None if the text can't be parsed.
+
+    Separate from extract_simple_commands() because redirect targets
+    aren't arguments to classify per-program; they matter only for the
+    secret/persistence path checks. Without this, `curl ... < ~/.aws/
+    credentials` (exfiltrating a credential file via input redirection)
+    and `echo ... >> ~/.bashrc` (a persistence write) were both
+    completely invisible to classification, since only argv words were
+    ever scanned and a redirect target never appears in argv.
+    """
+    try:
+        trees = bashlex.parse(command)
+    except Exception:
+        return None
+    out = []
+    for tree in trees:
+        _collect_redirect_targets(tree, out)
+    return out
+
+
 def pipeline_risk(commands):
     """Catches the two obfuscation/exfil shapes that a per-command check
     alone would miss: decoded-or-downloaded content piped into a shell, and

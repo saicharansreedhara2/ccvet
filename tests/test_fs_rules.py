@@ -42,6 +42,26 @@ def test_read_credential_path_is_denied(tmp_path):
     assert verdict.decision == "deny"
 
 
+def test_similarly_named_file_is_not_falsely_flagged_as_secret(tmp_path):
+    # Regression: "/etc/passwd" used to substring-match "/etc/passwd_notes.md".
+    etc_dir = tmp_path / "etc"
+    etc_dir.mkdir()
+    verdict = evaluate("Read", {"file_path": str(etc_dir / "passwd_notes.md")}, str(tmp_path))
+    assert verdict.decision != "deny"
+
+
+def test_similarly_named_file_is_not_falsely_flagged_as_persistence(tmp_path):
+    # Regression: ".bashrc" used to substring-match "my.bashrc_backup.txt".
+    verdict = evaluate("Write", {"file_path": str(tmp_path / "my.bashrc_backup.txt")}, str(tmp_path))
+    assert verdict.decision != "deny"
+
+
+def test_similarly_named_file_is_not_falsely_flagged_as_manifest(tmp_path):
+    # Regression: "package.json" used to substring-match "mypackage.json".
+    verdict = evaluate("Write", {"file_path": str(tmp_path / "mypackage.json")}, str(tmp_path))
+    assert "manifest" not in verdict.reason
+
+
 def test_write_with_no_recognizable_path_field_asks_rather_than_crashes(tmp_path):
     verdict = evaluate("Write", {"content": "hello"}, str(tmp_path))
     assert verdict.decision == "ask"

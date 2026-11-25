@@ -46,9 +46,14 @@ def status(args) -> int:
     project_settings = init.settings_path(use_global=False)
     global_settings = init.settings_path(use_global=True)
     for label, path in (("project", project_settings), ("global", global_settings)):
+        try:
+            settings = init._load(path)
+        except ValueError:
+            print(f"{label} hook ({path}): invalid JSON, cannot determine")
+            continue
         wired = any(
             init._is_ccvet_entry(e)
-            for e in init._load(path).get("hooks", {}).get("PreToolUse", [])
+            for e in settings.get("hooks", {}).get("PreToolUse", [])
         )
         print(f"{label} hook ({path}): {'wired' if wired else 'not wired'}")
 
@@ -77,15 +82,21 @@ def log_view(args) -> int:
         return 0
 
     lines = audit.LOG_PATH.read_text().strip().splitlines()
-    tail = lines[-args.tail:] if args.tail else lines
+    # A negative --tail used to produce confusing slice behavior
+    # (lines[5:] for --tail -5, i.e. "skip the first 5" instead of
+    # "show all"); treat anything that isn't a positive count as "all".
+    tail = lines[-args.tail:] if args.tail and args.tail > 0 else lines
 
     for line in tail:
         try:
             entry = json.loads(line)
-        except json.JSONDecodeError:
+            ts = datetime.fromtimestamp(entry["ts"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            print(f"[{ts}] {entry['decision']:>5}  {entry['tool']:<10} {entry['reason']}")
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # A single malformed or unexpectedly-shaped line (foreign
+            # content, a future log format, a truncated write) must not
+            # take down the rest of the log view with it.
             continue
-        ts = datetime.fromtimestamp(entry["ts"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        print(f"[{ts}] {entry['decision']:>5}  {entry['tool']:<10} {entry['reason']}")
 
     return 0
 
@@ -94,7 +105,11 @@ def allow(args) -> int:
     cwd = os.getcwd()
     pattern = args.pattern if args.regex else re.escape(args.pattern)
     reason = args.reason or f"promoted via `ccvet allow` on {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
-    path = userpolicy.add_rule(pattern, args.verdict, reason, use_global=args.global_, cwd=cwd)
+    try:
+        path = userpolicy.add_rule(pattern, args.verdict, reason, use_global=args.global_, cwd=cwd)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     print(f"Added rule to {path}: {args.verdict} when command matches {pattern!r}")
     return 0
 
@@ -107,7 +122,11 @@ def policy_edit(args) -> int:
         path.write_text("rules: []\n")
 
     editor = os.environ.get("EDITOR", "vi")
-    subprocess.run([editor, str(path)])
+    try:
+        subprocess.run([editor, str(path)])
+    except OSError as exc:
+        print(f"Could not launch editor {editor!r}: {exc}. Set $EDITOR or edit {path} directly.", file=sys.stderr)
+        return 1
     return 0
 
 
