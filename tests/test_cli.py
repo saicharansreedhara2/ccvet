@@ -51,6 +51,22 @@ def test_version_flag():
     assert buf.getvalue().strip()  # prints something, don't pin the exact version string here
 
 
+def test_version_matches_installed_package_metadata():
+    # Regression: __version__ used to be a hand-maintained string literal
+    # in __init__.py, separate from pyproject.toml's version field. They
+    # drifted (0.0.2 shipped printing "0.0.1"), caught only by installing
+    # the real published package, not by any test, since nothing checked
+    # that the two actually agreed. __version__ is now read from
+    # installed package metadata at runtime instead of hand-copied, so
+    # this can't drift again structurally, but this test still pins the
+    # cross-check explicitly so the mechanism itself stays honest.
+    import importlib.metadata
+
+    from ccvet import __version__
+
+    assert __version__ == importlib.metadata.version("ccvet")
+
+
 def test_main_dispatches_gate(monkeypatch):
     calls = []
     monkeypatch.setattr("ccvet.gate.run", lambda dry_run=False: calls.append(dry_run) or 0)
