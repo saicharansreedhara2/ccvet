@@ -6,7 +6,7 @@
 
 ccvet is a `PreToolUse` hook that auto-approves low-risk tool calls, hard-blocks dangerous ones, and only asks you about the genuinely ambiguous middle. Most of that classification happens with plain rules and heuristics, not a model call. For the leftover gray zone, you can optionally point it at any local LLM server (Ollama, LM Studio, vLLM) for a second opinion, without ever giving that model the power to block anything on its own.
 
-**Status: early (`0.0.1`), published and installable, but new.** Expect rough edges. See [`Docs/PLAN.md`](Docs/PLAN.md) for the build plan and [`Docs/risk-taxonomy.md`](Docs/risk-taxonomy.md) for the full rule set.
+**Status: early, published and installable, but new.** Expect rough edges (see the badge above for the current version). See [`Docs/PLAN.md`](Docs/PLAN.md) for the build plan and [`Docs/risk-taxonomy.md`](Docs/risk-taxonomy.md) for the full rule set.
 
 ## Contents
 

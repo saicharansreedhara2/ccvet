@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ccvet"
-version = "0.0.1"
+version = "0.0.2"
 description = "A risk-classifying PreToolUse permission hook for Claude Code. Auto-approves safe commands, blocks dangerous ones, asks about the rest, with an optional local LLM for the gray zone."
 readme = "README.md"
 license = "MIT"

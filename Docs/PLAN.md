@@ -145,7 +145,9 @@ A reviewer fetched the actual 0.0.1 wheel from PyPI and SECURITY.md from the rep
 
 Also addressed, not bugs: the reviewer correctly noted the published 0.0.1 README still said "not yet published to PyPI" - true for that specific already-uploaded artifact (the README fix landed in a commit after the `v0.0.1` tag was cut, and PyPI doesn't allow re-uploading a version), will be correct starting with the next release. The `requires-python >= 3.10` "practical blocker" on an older machine is working as intended (see the CI fix entry above), not a flaw to walk back. The audit log storing raw Bash command text in plaintext is an existing, deliberately documented tradeoff (SECURITY.md), not new.
 
-306 tests passing (up from 281), 99% coverage, wheel build re-verified clean. Not yet re-released to PyPI as a new version; these fixes are in the repo, pending a 0.0.2 (or later) tag.
+306 tests passing (up from 281), 99% coverage, wheel build re-verified clean.
+
+**Released as v0.0.2 (2026-11-27)**: bumped `pyproject.toml`, tagged, and pushed `v0.0.2`, carrying all four external-review fixes to PyPI. Also fixed the README's status line hardcoding "0.0.1" (would have gone stale on every future release); it now points at the version badge instead of a literal number.
 
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
