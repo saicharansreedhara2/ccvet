@@ -1,10 +1,12 @@
 # ccvet
 
+[![PyPI](https://img.shields.io/pypi/v/ccvet)](https://pypi.org/project/ccvet/)
+
 **A risk-classifying permission gate for [Claude Code](https://code.claude.com).**
 
 ccvet is a `PreToolUse` hook that auto-approves low-risk tool calls, hard-blocks dangerous ones, and only asks you about the genuinely ambiguous middle. Most of that classification happens with plain rules and heuristics, not a model call. For the leftover gray zone, you can optionally point it at any local LLM server (Ollama, LM Studio, vLLM) for a second opinion, without ever giving that model the power to block anything on its own.
 
-**Status: early development, not yet published to PyPI.** See [`Docs/PLAN.md`](Docs/PLAN.md) for the build plan and [`Docs/risk-taxonomy.md`](Docs/risk-taxonomy.md) for the full rule set.
+**Status: early (`0.0.1`), published and installable, but new.** Expect rough edges. See [`Docs/PLAN.md`](Docs/PLAN.md) for the build plan and [`Docs/risk-taxonomy.md`](Docs/risk-taxonomy.md) for the full rule set.
 
 ## Contents
 
@@ -38,10 +40,15 @@ Full detail, including the exact command-by-command classification table, is in 
 
 ## Install
 
-Not yet published. Once it is:
-
 ```
 pip3 install ccvet
+ccvet init
+```
+
+Or, to track the repo directly instead of PyPI:
+
+```
+pip3 install git+https://github.com/saicharansreedhara2/ccvet.git
 ccvet init
 ```
 
