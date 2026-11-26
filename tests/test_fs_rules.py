@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from ccvet.engine import evaluate
 
 
@@ -32,6 +34,15 @@ def test_write_to_git_hooks_is_denied(tmp_path):
     hooks_dir = tmp_path / ".git" / "hooks"
     hooks_dir.mkdir(parents=True)
     verdict = evaluate("Edit", {"file_path": str(hooks_dir / "pre-commit")}, str(tmp_path))
+    assert verdict.decision == "deny"
+
+
+@pytest.mark.parametrize("filename", [".env", ".netrc", ".npmrc", ".pypirc", ".envrc"])
+def test_read_env_style_credential_files_is_denied(tmp_path, filename):
+    # Previously missing entirely: these are arguably the most common
+    # real-world location for secrets, more so than some entries (like
+    # /etc/shadow) that were already covered.
+    verdict = evaluate("Read", {"file_path": str(tmp_path / filename)}, str(tmp_path))
     assert verdict.decision == "deny"
 
 

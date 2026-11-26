@@ -18,9 +18,11 @@ Four verdicts:
 ## Git
 | Verdict | Examples |
 |---|---|
-| AUTO | `git status`, `git diff`, `git log`, `git show`, `git blame`, `git branch` (list), `git remote -v`, `git stash list`, `git fetch`, `git describe`, `git tag -l` |
-| ASK | `git add`, `git commit`, `git checkout -b`, `git merge` (non-force), `git pull`, `git rebase` (local, unpushed), `git stash pop`, `git tag` (create) |
+| AUTO | `git status`, `git diff`, `git log`, `git show`, `git blame`, `git branch` (list), `git remote -v`/`show` (not add/remove/set-url), `git stash list`, `git fetch`, `git describe`, `git tag -l`/`git tag <name>` (list or create, not `-d`/`--delete`) |
+| ASK | `git add`, `git commit`, `git checkout -b`, `git merge` (non-force), `git pull`, `git rebase` (local, unpushed), `git stash pop`, `git remote add`/`remove`/`rm`/`set-url`/`rename` (can redirect future pushes to an attacker-controlled remote), `git tag -d`/`--delete` |
 | BLOCK | `git push --force`/`--force-with-lease` to `main`/`master`/protected branches, `git reset --hard`, `git clean -fdx`, `git branch -D` on protected branches, `git push origin --delete <protected>`, `git filter-branch`/`filter-repo` |
+
+`git remote` and `git tag` were originally treated as blanket read-only, with no check on their mutating sub-forms (`remote add/remove/set-url`, `tag -d`). Flagged by an external review and fixed: these two now have the same flag-sensitive handling as `push`/`reset`/`clean`/`branch` always did.
 
 ## Package managers and dependencies
 | Verdict | Examples |
@@ -52,10 +54,14 @@ Four verdicts:
 ## Secrets and credentials
 | Verdict | Examples |
 |---|---|
-| BLOCK (always, regardless of read vs write, including as a shell redirect target) | any path under `~/.ssh/id_*`, `~/.aws/credentials`, `~/.config/gcloud`, `.env` with real secrets, `/etc/passwd`, `/etc/shadow`, as a plain argument, as input to a command (`cat secret \| cmd`), or as a redirect target (`cmd < ~/.aws/credentials`, `cmd >> ~/.ssh/authorized_keys`) |
+| BLOCK (always, regardless of read vs write, including as a shell redirect target) | any path under `~/.ssh/id_*`, `~/.aws/credentials`, `~/.config/gcloud`, `/etc/passwd`, `/etc/shadow`, `.env`, `.netrc`, `.npmrc`, `.pypirc`, `.envrc`, as a plain argument, as input to a command (`cat secret \| cmd`), or as a redirect target (`cmd < ~/.aws/credentials`, `cmd >> ~/.ssh/authorized_keys`) |
 | BLOCK, overridable | anything matching `*token*`/`*secret*`/`*credential*` **combined with** a network call in the same command. Fuzzy name-based matching can false-positive on two unrelated sub-commands sharing one compound statement, so unlike the exact-path match above, this one can be promoted past with `ccvet allow` once reviewed. |
 
 Path matching (both here and for Edit/Write tool calls) is component-aware, not a raw substring search on the resolved path: `/etc/passwd` matches an actual file named `passwd` inside an `etc` directory, not `/etc/passwd_notes.md`. Redirect targets (`>`, `>>`, `<`, `<<<`) are checked the same way as Edit/Write paths, since a secret or persistence path used only as a redirect target never appears in a command's argument list at all.
+
+`.env`/`.netrc`/`.npmrc`/`.pypirc`/`.envrc` were missing from this list entirely until an external review flagged it: `.env` in particular is arguably the single most common real-world location for secrets in an actual project, more so than several entries that were already covered.
+
+**Dynamic arguments.** A command's own name being dynamically constructed (`$(echo rm) -rf /`) was already denied outright, but an *argument* being dynamically constructed was not checked at all: `cat $(ls -d ~/.ssh)/id_rsa` has a perfectly ordinary, recognized command name ("cat"), and the raw argument text `$(ls -d ~/.ssh)/id_rsa` doesn't contain `.ssh/id_` as a contiguous substring (the closing paren breaks it), so this classified straight to `allow`. Also found by external review. Fixed: any extracted command whose argument contains a substitution or variable expansion that isn't *purely* a self-contained command/process substitution (i.e. not just `<(ls -la)` as the whole argument, where the inner command is independently classified anyway) now caps the result at `ask` instead of `allow`, regardless of which program is being called.
 
 ## Database
 | Verdict | Examples |

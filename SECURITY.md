@@ -42,6 +42,13 @@ Fixed during hardening and worth naming, since they illustrate the kind of bug t
 - The catastrophic-target list for `rm -rf`/`chmod -R` was missing several top-level system directories (`/var`, `/opt`, `/Applications`, `/Library`, `/root`, and others), didn't recognize a literal home-directory root (`/Users/<name>`, `/home/<name>`) as catastrophic, didn't catch a bare `*` wildcard, and (for chmod) only recognized octal `777`/`000`, not symbolic-mode grants like `a+rwx` that achieve the same thing.
 - The DELETE/UPDATE-without-WHERE check scanned the whole command's text rather than the specific SQL statement, so a genuinely unconditional `DELETE FROM users` paired with an unrelated `WHERE` elsewhere in the same multi-statement command escaped detection.
 
+Found by an external static review of the published package, after the above (which were all found internally):
+
+- **`cat $(ls -d ~/.ssh)/id_rsa` fully bypassed to `allow`.** The secret-path guard's substring check couldn't see `.ssh/id_` in the raw argument text (the closing paren breaks the match), and since `ls` is independently extracted and classified on its own, `cat` being on the allowlist let the whole thing through with no awareness that its argument's real value was unverifiable. Fixed: an auto-approved verdict is now downgraded to `ask` whenever an argument (not just the command name) contains a substitution or variable expansion that isn't a self-contained, independently-classified one (see `Docs/risk-taxonomy.md` for the exact distinction, including why `<(ls -la)` alone is unaffected).
+- **`env` with no arguments was on the auto-approve allowlist.** It prints every environment variable, which for an agent session commonly includes active API keys and tokens. The project's own taxonomy document already said this should ask, not auto; the shipped policy file simply disagreed with its own documentation, and nothing had ever tested it specifically. Fixed.
+- **`git remote` and `git tag` were treated as blanket read-only, with no check on their mutating sub-forms.** `git remote add`/`remove`/`set-url` (which can silently redirect future pushes to an attacker-controlled remote) and `git tag -d`/`--delete` were all auto-approved. Fixed with the same flag-sensitive handling `push`/`reset`/`clean`/`branch` already had.
+- **`.env`, `.netrc`, `.npmrc`, `.pypirc`, and `.envrc` were entirely absent from the credential-path list.** `.env` in particular is arguably the single most common real-world location for secrets in an actual project. Fixed for both Bash commands and Edit/Write/Read tool calls.
+
 All of the above are fixed and covered by regression tests now. If you find a case like this, see "Reporting a vulnerability" below.
 
 ## Reporting a vulnerability

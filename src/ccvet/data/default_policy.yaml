@@ -34,7 +34,16 @@ auto_programs:
   - uptime
   - ps
   - top
-  - env
+
+# "env" is deliberately NOT here, even though risk-taxonomy.md always
+# said it should ask, not auto - it was shipped in the auto list by
+# mistake. `env` with no arguments dumps the *current session's own*
+# environment, which for an agent session commonly includes real,
+# actively-used API keys and tokens. "ps"/"top" stay auto as a
+# conscious judgment call: they expose *other* processes' info (a real
+# but different, lower-probability vector), and are common enough that
+# asking about them constantly would reintroduce the prompt fatigue
+# ccvet exists to reduce.
 
 # npm/pip/pip3 are deliberately absent here — they have their own
 # subcommand-aware classifier in rules.py (list/show/freeze are read-only,
@@ -73,8 +82,10 @@ ask_programs:
 
 # Git subcommands with no argument-sensitivity (no destructive flags
 # possible for these specific subcommands). "push", "reset", "clean",
-# "branch", "stash", and "filter-branch" are handled by dedicated logic in
-# rules.py instead, since their risk depends entirely on their flags.
+# "branch", "stash", "remote", "tag", and "filter-branch" are all handled
+# by dedicated logic in rules.py instead, since their risk depends
+# entirely on their flags (e.g. "git remote remove origin" and
+# "git tag -d" are mutating, but "git remote -v" and "git tag -l" aren't).
 git:
-  auto_subcommands: [status, diff, log, show, blame, remote, fetch, describe, tag]
+  auto_subcommands: [status, diff, log, show, blame, fetch, describe]
   ask_subcommands: [add, commit, checkout, merge, pull, rebase]

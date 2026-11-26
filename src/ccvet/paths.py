@@ -27,10 +27,22 @@ PERSISTENCE_PATTERNS = (
 SECRET_PATTERNS = (
     ".ssh/id_", ".ssh/authorized_keys", ".aws/credentials", ".aws/config",
     ".config/gcloud", "etc/passwd", "etc/shadow",
+    # .env is arguably the single most common place real secrets live in
+    # an actual project; .netrc/.npmrc/.pypirc/.envrc all routinely carry
+    # auth tokens too. Matching rules.py's SPECIFIC_SECRET_PATH_PATTERNS,
+    # which covers the same files for Bash commands. Note this means a
+    # Write to .npmrc is now a hard deny too, not just the "ask, it's a
+    # manifest file" treatment below - consistent with every other
+    # exact-path secret match being unconditional regardless of read vs
+    # write, and the more defensible default for something that often
+    # carries a registry auth token.
+    ".env", ".netrc", ".npmrc", ".pypirc", ".envrc",
 )
 
 MANIFEST_PATTERNS = (
-    "package.json", ".npmrc", "pyproject.toml", "pipfile",
+    # .npmrc deliberately not repeated here - it's in SECRET_PATTERNS
+    # above, which is checked first and would make this entry dead code.
+    "package.json", "pyproject.toml", "pipfile",
     ".github/workflows", ".gitlab-ci.yml", "jenkinsfile", "dockerfile",
 )
 

@@ -27,7 +27,7 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
     if sql_verdict is not None:
         return sql_verdict
 
-    all_argvs = [argv for argv, _dynamic in commands]
+    all_argvs = [argv for argv, _dynamic_name, _has_dynamic_arg in commands]
     secret_verdict = rules.secret_path_guard(all_argvs)
     if secret_verdict is not None:
         return secret_verdict
@@ -37,7 +37,10 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
     if redirect_verdict is not None:
         return redirect_verdict
 
-    verdicts = [rules.classify_argv(argv) for argv in all_argvs]
+    verdicts = [
+        rules.classify_argv(argv, has_dynamic_arg=has_dynamic_arg)
+        for argv, _dynamic_name, has_dynamic_arg in commands
+    ]
     verdict = most_severe(verdicts)
 
     if verdict.overridable:

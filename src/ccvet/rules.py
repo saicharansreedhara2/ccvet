@@ -17,6 +17,11 @@ GIT_ASK_SUBCOMMANDS = set(_POLICY["git"]["ask_subcommands"])
 SPECIFIC_SECRET_PATH_PATTERNS = (
     ".ssh/id_", ".ssh/authorized_keys", ".aws/credentials", ".aws/config",
     ".config/gcloud", "/etc/passwd", "/etc/shadow",
+    # .env is arguably the single most common place real secrets live in
+    # an actual project; .netrc/.npmrc/.pypirc/.envrc all routinely carry
+    # auth tokens too. All missing here before, despite being more common
+    # in practice than most of the entries above.
+    ".env", ".netrc", ".npmrc", ".pypirc", ".envrc",
 )
 GENERIC_SECRET_NAME_PATTERNS = ("token", "secret", "credential")
 NETWORK_PROGRAMS = {"curl", "wget", "nc", "netcat", "ssh", "scp", "rsync", "ftp"}
@@ -176,6 +181,19 @@ def _classify_git(args):
         if not rest or rest[0] == "list":
             return Verdict.allow("git stash list is read-only", overridable=True)
         return Verdict.ask(f"git stash {' '.join(rest)}".strip(), overridable=True)
+    # "remote" and "tag" were in GIT_AUTO_SUBCOMMANDS as if every
+    # invocation were as harmless as `git remote -v`/`git tag -l`, with
+    # no check for their mutating forms: `git remote remove origin` (or
+    # set-url, to redirect future pushes anywhere), and `git tag -d`/
+    # `--delete` were both silently auto-approved.
+    if sub == "remote":
+        if rest and rest[0] in {"add", "remove", "rm", "set-url", "rename", "set-head", "set-branches"}:
+            return Verdict.ask(f"git remote {' '.join(rest)}".strip(), overridable=True)
+        return Verdict.allow("git remote (list/show) is read-only", overridable=True)
+    if sub == "tag":
+        if any(f in rest for f in ("-d", "--delete")):
+            return Verdict.ask(f"git tag {' '.join(rest)}".strip(), overridable=True)
+        return Verdict.allow("git tag (list/create) is read-only-ish", overridable=True)
     if sub in GIT_AUTO_SUBCOMMANDS:
         return Verdict.allow(f"git {sub} is read-only", overridable=True)
     if sub in GIT_ASK_SUBCOMMANDS:
@@ -183,7 +201,32 @@ def _classify_git(args):
     return Verdict.ask(f"git {sub} (unrecognized subcommand)", overridable=True)
 
 
-def classify_argv(argv):
+def classify_argv(argv, has_dynamic_arg=False):
+    """`has_dynamic_arg` means some word in argv (not necessarily the
+    command name) came from a `$(...)`/`<(...)` substitution, so its real
+    value can't be known statically. `cat $(ls -d ~/.ssh)/id_rsa` has a
+    perfectly ordinary, recognized command name ("cat"), but the raw text
+    "$(ls -d ~/.ssh)/id_rsa" doesn't contain ".ssh/id_" as a contiguous
+    substring (the closing paren breaks it), so the secret-path guard
+    never saw it, and "cat" being auto-approved classified the whole
+    thing straight to allow. An otherwise-auto-approved verdict is
+    downgraded to ask here instead, since we genuinely cannot verify
+    what the argument resolves to.
+    """
+    verdict = _classify_argv(argv)
+    if has_dynamic_arg and verdict.decision == "allow":
+        from .verdict import Verdict
+
+        program = _basename(argv[0]) if argv else ""
+        return Verdict.ask(
+            f"an argument to `{program}` is dynamically constructed (e.g. from $(...) or <(...)), "
+            "cannot verify it doesn't resolve to a sensitive path",
+            overridable=True,
+        )
+    return verdict
+
+
+def _classify_argv(argv):
     from .verdict import Verdict
 
     if not argv:
@@ -194,6 +237,13 @@ def classify_argv(argv):
 
     if program in {"sudo", "doas"}:
         return Verdict.deny(f"{program} escalates privileges")
+
+    if program == "env" and not args:
+        return Verdict.ask(
+            "env with no arguments prints every environment variable, which commonly includes "
+            "active API keys/tokens for the current session",
+            overridable=True,
+        )
 
     # `exec`/`command`/`builtin` pass their remaining words straight
     # through as the real command (bashlex has already split them into
@@ -214,7 +264,11 @@ def classify_argv(argv):
 
         joined = " ".join(args)
         inner_commands = shell.extract_simple_commands(joined)
-        inner_verdicts = [classify_argv(a) for a, _dynamic in (inner_commands or []) if a]
+        inner_verdicts = [
+            classify_argv(a, has_dynamic_arg=has_dyn)
+            for a, _dynamic_name, has_dyn in (inner_commands or [])
+            if a
+        ]
         if inner_verdicts:
             from .verdict import most_severe
 

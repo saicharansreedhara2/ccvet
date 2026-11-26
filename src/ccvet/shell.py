@@ -24,6 +24,44 @@ def _children(node):
     return children
 
 
+# Tilde expansion (~) is represented as its own node kind in a word's
+# `.parts`, but it's entirely predictable (always "the home directory"),
+# not something that could be hiding an unknown or attacker-influenced
+# value the way a substitution or variable expansion could. It must not
+# count toward "this argument can't be statically verified" - otherwise
+# every single `~/...`-prefixed path (an extremely common, ordinary
+# shape) would be flagged.
+_UNTRUSTED_PART_KINDS = {"commandsubstitution", "processsubstitution", "parameter"}
+
+
+def _has_untrusted_dynamic_content(word) -> bool:
+    """True if `word` contains a command/process substitution or a
+    variable expansion whose resolved value can't be known statically,
+    UNLESS the word is *entirely* one command/process substitution (e.g.
+    `<(ls -la)` as a whole argument, nothing glued onto it) - in that
+    case the inner command gets independently extracted and classified
+    elsewhere, so there's nothing left to distrust about the word itself.
+
+    A parameter expansion (`$SECRET_FILE`) is always untrusted, pure or
+    not: unlike a substitution, there's no inner command to independently
+    verify, so the value is simply unknown. Literal text glued around a
+    substitution, e.g. `$(ls -d ~/.ssh)/id_rsa`, is also untrusted: the
+    word's own span is wider than the substitution's span (bashlex
+    positions make the concatenation detectable - the substitution's
+    `.pos` only covers the `$(...)` portion, not the trailing text).
+    """
+    parts = getattr(word, "parts", None) or []
+    risky_parts = [p for p in parts if getattr(p, "kind", None) in _UNTRUSTED_PART_KINDS]
+    if not risky_parts:
+        return False
+    if len(parts) == 1 and len(risky_parts) == 1:
+        only = risky_parts[0]
+        if only.kind in ("commandsubstitution", "processsubstitution"):
+            if getattr(only, "pos", None) == getattr(word, "pos", None):
+                return False
+    return True
+
+
 def _collect(node, out):
     kind = getattr(node, "kind", None)
     if kind in ("commandsubstitution", "processsubstitution"):
@@ -38,17 +76,31 @@ def _collect(node, out):
         words = [p for p in node.parts if p.kind == "word"]
         argv = [w.word for w in words]
         dynamic_name = bool(words) and bool(getattr(words[0], "parts", None))
-        out.append((argv, dynamic_name))
+        # Not just the command name: `cat $(ls -d ~/.ssh)/id_rsa` has a
+        # perfectly static, recognized command name ("cat") but an
+        # argument that's partly substituted. The substring-based secret-
+        # path check can't see ".ssh/id_" in the raw text "$(ls -d
+        # ~/.ssh)/id_rsa" (the closing paren breaks the match), and since
+        # "ls" is independently extracted and is itself auto-approved,
+        # this classified straight to "allow" with no awareness that the
+        # argument's real value can't be statically verified at all.
+        # `<(ls -la)` alone is NOT flagged: see _has_untrusted_dynamic_content.
+        has_dynamic_arg = any(_has_untrusted_dynamic_content(w) for w in words)
+        out.append((argv, dynamic_name, has_dynamic_arg))
     for part in _children(node):
         _collect(part, out)
 
 
 def extract_simple_commands(command: str):
-    """Returns a flat, left-to-right list of (argv, dynamic_name) for every
-    simple command found anywhere in the parse tree — including inside
-    pipelines, lists, and command substitutions — or None if the text
-    can't be parsed as shell at all (caller should treat that as gray-zone,
-    not as safe).
+    """Returns a flat, left-to-right list of (argv, dynamic_name,
+    has_dynamic_arg) for every simple command found anywhere in the parse
+    tree, including inside pipelines, lists, and command substitutions,
+    or None if the text can't be parsed as shell at all (caller should
+    treat that as gray-zone, not as safe). `dynamic_name` means the
+    command name itself (argv[0]) is dynamically constructed;
+    `has_dynamic_arg` means any word in argv is, which matters for
+    deciding whether an otherwise-safe, recognized command can still be
+    auto-approved when one of its arguments can't be statically verified.
     """
     try:
         trees = bashlex.parse(command)
@@ -106,7 +158,7 @@ def pipeline_risk(commands):
     statically classified at all). Returns a Verdict or None.
     """
     seen_decode_or_download = False
-    for argv, dynamic_name in commands:
+    for argv, dynamic_name, _has_dynamic_arg in commands:
         if not argv:
             continue
         if dynamic_name:
