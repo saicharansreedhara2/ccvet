@@ -112,6 +112,21 @@ def extract_simple_commands(command: str):
     return out
 
 
+def _word_has_any_dynamic_content(word) -> bool:
+    """Stricter than _has_untrusted_dynamic_content: used for redirect
+    targets, where even a *pure* substitution (no concatenation) is
+    unverifiable. For an argv data source, classifying the inner command
+    tells us what we're reading (`<(ls -la)` reads exactly `ls -la`'s
+    output). For a redirect *target*, the inner command's output becomes
+    a destination path, and there's no way to know that path without
+    actually running the command - so unlike argv, there's no "pure
+    substitution, independently verified" exception here at all. Tilde is
+    still excluded (predictable, not a substitution or variable).
+    """
+    parts = getattr(word, "parts", None) or []
+    return any(getattr(p, "kind", None) in _UNTRUSTED_PART_KINDS for p in parts)
+
+
 def _collect_redirect_targets(node, out):
     kind = getattr(node, "kind", None)
     if kind in ("commandsubstitution", "processsubstitution"):
@@ -123,15 +138,28 @@ def _collect_redirect_targets(node, out):
                 continue
             target = getattr(part, "output", None)
             if getattr(target, "kind", None) == "word":
-                out.append(target.word)
+                # A redirect target's own `.word` is the raw, unexpanded
+                # text, e.g. "$(echo ~/.bashrc)" - a substitution inside
+                # a redirect target was never being recursed into at
+                # all (no check of `target.parts` here), so neither the
+                # secret/persistence pattern match (looking for a
+                # literal ".bashrc" substring broken up by the
+                # surrounding "$(...)") nor any other check ever saw it.
+                # `cat myfile > $(echo ~/.bashrc)` classified as a plain
+                # allow with zero awareness the destination was
+                # unverifiable.
+                is_dynamic = _word_has_any_dynamic_content(target)
+                out.append((target.word, is_dynamic))
     for part in _children(node):
         _collect_redirect_targets(part, out)
 
 
 def extract_redirect_targets(command: str):
-    """Returns a flat list of every redirection target (the right-hand
-    side of `>`, `>>`, `<`, `<<<`, ...) found anywhere in the parse tree,
-    or None if the text can't be parsed.
+    """Returns a flat list of (target_text, is_dynamic) for every
+    redirection target (the right-hand side of `>`, `>>`, `<`, `<<<`,
+    ...) found anywhere in the parse tree, or None if the text can't be
+    parsed. `is_dynamic` means the target contains a substitution or
+    variable expansion whose resolved value can't be known statically.
 
     Separate from extract_simple_commands() because redirect targets
     aren't arguments to classify per-program; they matter only for the

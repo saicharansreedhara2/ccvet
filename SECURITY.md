@@ -49,6 +49,12 @@ Found by an external static review of the published package, after the above (wh
 - **`git remote` and `git tag` were treated as blanket read-only, with no check on their mutating sub-forms.** `git remote add`/`remove`/`set-url` (which can silently redirect future pushes to an attacker-controlled remote) and `git tag -d`/`--delete` were all auto-approved. Fixed with the same flag-sensitive handling `push`/`reset`/`clean`/`branch` already had.
 - **`.env`, `.netrc`, `.npmrc`, `.pypirc`, and `.envrc` were entirely absent from the credential-path list.** `.env` in particular is arguably the single most common real-world location for secrets in an actual project. Fixed for both Bash commands and Edit/Write/Read tool calls.
 
+A second round of external review, after the v0.0.2 release, found three more:
+
+- **A substitution inside a redirect target was a second instance of the same bypass class.** `cat myfile > $(echo ~/.bashrc)` extracted the redirect target as the raw, unexpanded text `$(echo ~/.bashrc)`, which doesn't match any literal pattern, and nothing checked whether a redirect target was dynamically constructed the way an argument now is. Fixed: any redirect target containing a substitution or variable expansion is denied outright (not just downgraded to `ask`, since there's no independent way to verify a *destination* path the way classifying an inner command can verify a *data source* like `<(ls -la)`).
+- **The `.env` credential-path check for Bash arguments was a raw substring match, not component-aware like the Edit/Write path check already was.** `cat .env.example`/`.env.local`/`.env.sample` (common, safe conventions for documenting required variables, not real secrets) were denied. Fixed by reusing the same component-aware matcher for both.
+- **`git remote prune` was missing from the mutating-subcommand list**, alongside `add`/`remove`/`set-url`/etc. Fixed.
+
 All of the above are fixed and covered by regression tests now. If you find a case like this, see "Reporting a vulnerability" below.
 
 ## Reporting a vulnerability

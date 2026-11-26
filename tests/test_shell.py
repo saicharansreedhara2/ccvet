@@ -119,15 +119,15 @@ def test_process_substitution_with_only_safe_commands_is_not_falsely_flagged():
 # credentials` or `echo ... >> ~/.bashrc` had no sensitive path visible
 # to classification anywhere.
 def test_output_redirect_target_is_extracted():
-    assert shell.extract_redirect_targets("echo hi >> ~/.bashrc") == ["~/.bashrc"]
+    assert shell.extract_redirect_targets("echo hi >> ~/.bashrc") == [("~/.bashrc", False)]
 
 
 def test_input_redirect_target_is_extracted():
-    assert shell.extract_redirect_targets("cat < ~/.ssh/id_rsa") == ["~/.ssh/id_rsa"]
+    assert shell.extract_redirect_targets("cat < ~/.ssh/id_rsa") == [("~/.ssh/id_rsa", False)]
 
 
 def test_here_string_redirect_target_is_extracted():
-    assert shell.extract_redirect_targets("cmd <<< somefile") == ["somefile"]
+    assert shell.extract_redirect_targets("cmd <<< somefile") == [("somefile", False)]
 
 
 def test_extract_redirect_targets_returns_none_for_unparseable_input():
@@ -141,5 +141,31 @@ def test_fd_duplication_redirect_has_no_word_target():
 
 
 def test_redirect_inside_command_substitution_is_still_found():
-    targets = shell.extract_redirect_targets("echo $(cat < ~/.ssh/id_rsa)")
+    targets = [t for t, _is_dynamic in shell.extract_redirect_targets("echo $(cat < ~/.ssh/id_rsa)")]
     assert "~/.ssh/id_rsa" in targets
+
+
+# Regression tests for a fourth bug, found by a second round of external
+# review after v0.0.3: a substitution *inside* a redirect target was
+# never recursed into or flagged, so `cat myfile > $(echo ~/.bashrc)`
+# extracted to the raw, unexpanded text "$(echo ~/.bashrc)", which
+# doesn't match any literal pattern and wasn't marked dynamic either -
+# classified as a plain allow with no awareness the destination was
+# unverifiable.
+def test_substitution_in_redirect_target_is_flagged_dynamic():
+    targets = shell.extract_redirect_targets("cat myfile > $(echo ~/.bashrc)")
+    assert any(is_dynamic for _target, is_dynamic in targets)
+
+
+def test_plain_tilde_redirect_target_is_not_flagged_dynamic():
+    targets = shell.extract_redirect_targets("cat myfile > ~/.bashrc")
+    assert all(not is_dynamic for _target, is_dynamic in targets)
+
+
+def test_pure_substitution_redirect_target_is_still_flagged_dynamic():
+    # Unlike an argv data source, even a "pure" substitution target
+    # (nothing concatenated) is unverifiable, since the destination path
+    # is whatever the inner command prints - there's no independent
+    # verification story the way there is for a data source.
+    targets = shell.extract_redirect_targets("cat myfile > $(mktemp)")
+    assert any(is_dynamic for _target, is_dynamic in targets)

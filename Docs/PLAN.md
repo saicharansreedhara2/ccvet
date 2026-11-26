@@ -153,6 +153,18 @@ Also addressed, not bugs: the reviewer correctly noted the published 0.0.1 READM
 
 Fixed properly rather than just re-syncing the string: `__init__.py` now reads `__version__` from installed package metadata at runtime (`importlib.metadata.version("ccvet")`), falling back to a placeholder only when running from source with no installed metadata at all. This makes `pyproject.toml`'s `version` field the sole source of truth permanently; there is no second place to remember to update. Released as **v0.0.3**, with the fix verified by building the wheel locally and installing it into a clean venv before tagging, not just trusting `pip install ccvet` against the real index again.
 
+## Second round of external review (2026-11-27): three more residual gaps after v0.0.3
+
+The same external reviewer came back after v0.0.3 with a "residual gaps, not yet fixed" list. Verified each claim against the actual code before fixing anything (same discipline as the first round), and all three held up:
+
+- **A substitution inside a redirect target was a second instance of the dynamic-argument bypass, one level deeper.** `cat myfile > $(echo ~/.bashrc)`: `_collect_redirect_targets` grabbed the redirect target's raw `.word` text without ever checking whether it contained a nested substitution, so it extracted as the literal, unexpanded string `$(echo ~/.bashrc)`, matched no pattern, and had no dynamic-content check applied to it at all (only argv words had one, from the previous round's fix). Classified as a plain `allow`. Fixed in `shell.py`: redirect targets are now extracted as `(text, is_dynamic)` pairs, and any dynamic one is denied outright by `rules.redirect_target_guard`, not merely downgraded to `ask` the way a dynamic argv argument is - deliberately stricter, since there's no equivalent to classifying `<(ls -la)`'s inner command for verification: a redirect target's inner command output becomes a destination path, not inspectable data, so even a "pure" substitution like `$(mktemp)` with nothing concatenated is still unverifiable and denied.
+- **The Bash-argument `.env` credential check was a raw substring match, unlike the Edit/Write path check, which was already component-aware.** `cat .env.example`/`.env.local`/`.env.sample` (safe, common conventions for documenting required variables) were denied. Fixed by routing the Bash-side specific-secret-pattern check through the same `paths.path_text_matches_any` component-aware matcher the file-tool side already used, rather than two different matching strategies for what should be the same check.
+- **`git remote prune` was missing from the mutating-subcommand list.** A minor miss alongside `add`/`remove`/`set-url`, same fix pattern. Added.
+
+Two other items the reviewer flagged were correctly labeled as non-issues, not bugs: `git tag` (create) being `allow` while `git tag -d` asks is an intentional, honestly-documented asymmetry (creating a tag isn't destructive), and the audit log storing raw Bash command text in plaintext is the existing, already-documented tradeoff from Phase 2/SECURITY.md, unchanged.
+
+317 tests passing (up from 306), 99% coverage, wheel build re-verified clean. Not yet released to PyPI as of this writing.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

@@ -67,6 +67,23 @@ def test_version_matches_installed_package_metadata():
     assert __version__ == importlib.metadata.version("ccvet")
 
 
+def test_version_falls_back_when_not_installed(monkeypatch):
+    import importlib
+    import importlib.metadata
+
+    import ccvet
+
+    def raise_not_found(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", raise_not_found)
+    try:
+        importlib.reload(ccvet)
+        assert ccvet.__version__ == "0.0.0+unknown"
+    finally:
+        importlib.reload(ccvet)  # restore the real version for any other tests
+
+
 def test_main_dispatches_gate(monkeypatch):
     calls = []
     monkeypatch.setattr("ccvet.gate.run", lambda dry_run=False: calls.append(dry_run) or 0)

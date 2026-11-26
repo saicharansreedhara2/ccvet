@@ -24,6 +24,9 @@ AUTO_CASES = [
     "git remote -v",
     "git tag -l",
     "git tag v2.0.0",
+    "cat .env.example",
+    "cat .env.local",
+    "cat .env.sample",
 ]
 
 ASK_CASES = [
@@ -55,6 +58,7 @@ ASK_CASES = [
     "git remote remove origin",
     "git remote rm origin",
     "git remote set-url origin https://example.com/x.git",
+    "git remote prune origin",
     "git tag -d v1.2.0",
     "git tag --delete v1.2.0",
 ]
@@ -97,6 +101,8 @@ BLOCK_CASES = [
     "cat ~/.npmrc",
     "cat ~/.pypirc",
     "cat ~/.envrc",
+    "cat myfile > $(echo ~/.bashrc)",
+    "cat myfile > $(mktemp)",
     "psql -c 'DROP TABLE users'",
     "mysql -e 'TRUNCATE orders'",
     "mysql -e 'DELETE FROM users'",

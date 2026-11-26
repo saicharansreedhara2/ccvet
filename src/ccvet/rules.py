@@ -54,11 +54,21 @@ def _basename(path: str) -> str:
 
 
 def _any_secret_arg(all_argvs, specific: bool) -> bool:
-    patterns = SPECIFIC_SECRET_PATH_PATTERNS if specific else GENERIC_SECRET_NAME_PATTERNS
+    if specific:
+        # Component-aware, like paths.py's matcher for Edit/Write/
+        # redirect targets - a raw substring check here meant ".env"
+        # matched ".env.example"/".env.local" too (common, safe
+        # conventions for documenting required variables, not real
+        # secrets), denying something that was never dangerous.
+        for argv in all_argvs:
+            for arg in argv[1:]:
+                if paths.path_text_matches_any(arg, SPECIFIC_SECRET_PATH_PATTERNS):
+                    return True
+        return False
     for argv in all_argvs:
         for arg in argv[1:]:
             low = arg.lower()
-            if any(p in low for p in patterns):
+            if any(p in low for p in GENERIC_SECRET_NAME_PATTERNS):
                 return True
     return False
 
@@ -96,10 +106,25 @@ def redirect_target_guard(redirect_targets):
     credential file via input redirection) and `echo ... >> ~/.bashrc`
     (a persistence write) were both classified with no awareness of the
     sensitive path at all.
+
+    `is_dynamic` catches a second bypass of the same shape: a redirect
+    target containing a substitution (`cat myfile > $(echo ~/.bashrc)`)
+    extracts to the raw, unexpanded text, which doesn't match any literal
+    pattern, and there's no inner-command classification that can tell
+    us what a *destination* path resolves to the way there is for a data
+    *source* (contrast with `<(ls -la)` in classify_argv). Denied
+    outright, not just asked, matching the severity of every other check
+    in this function and the "can't verify the command name -> deny"
+    precedent in shell.pipeline_risk.
     """
     from .verdict import Verdict
 
-    for target in redirect_targets:
+    for target, is_dynamic in redirect_targets:
+        if is_dynamic:
+            return Verdict.deny(
+                f"command redirects to/from a dynamically constructed target ({target}), "
+                "cannot verify it doesn't resolve to a sensitive path"
+            )
         if paths.path_text_matches_any(target, paths.SECRET_PATTERNS):
             return Verdict.deny(f"command redirects to/from a credential file path ({target})")
         if paths.path_text_matches_any(target, paths.PERSISTENCE_PATTERNS):
@@ -187,7 +212,7 @@ def _classify_git(args):
     # set-url, to redirect future pushes anywhere), and `git tag -d`/
     # `--delete` were both silently auto-approved.
     if sub == "remote":
-        if rest and rest[0] in {"add", "remove", "rm", "set-url", "rename", "set-head", "set-branches"}:
+        if rest and rest[0] in {"add", "remove", "rm", "set-url", "rename", "set-head", "set-branches", "prune"}:
             return Verdict.ask(f"git remote {' '.join(rest)}".strip(), overridable=True)
         return Verdict.allow("git remote (list/show) is read-only", overridable=True)
     if sub == "tag":
