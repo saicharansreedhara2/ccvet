@@ -202,6 +202,15 @@ A sandboxed round-trip test of `init`/`status`/`uninstall` against real `setting
 
 7 new regression tests in `test_init.py` (absolute-path resolution, bare-name fallback, shape-based entry matching, stale-path replacement on reinstall, preview-equals-written-bytes for both `init` and `uninstall`, a non-command hook-type skip for coverage). 357 tests passing (up from 350), 99% coverage (100% on `init.py`). `Docs/hook-contract.md` updated to note the absolute-path behavior, and to re-confirm (by fetching the live upstream docs page, not just trusting the 2026-11-23 snapshot) that `defer` is a real, documented `permissionDecision` value, not a ccvet invention, after a question raised that specific doubt.
 
+**Released as v0.0.7 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a real `ccvet init` smoke test against the built wheel confirming the absolute path gets written, then tagged and pushed.
+
+## Follow-up to the operational wiring review (2026-11-27): two nits, both closed
+
+- **`_hook_binary()`'s own fallback was silent.** When no `ccvet` binary sits next to the running interpreter (`python -m ccvet.cli init` from a source checkout with no installed console script, the rare case), it quietly wrote the bare `"ccvet"` name again - the exact shape the fix above exists to avoid, just on a rarer path, with no indication to the user that it happened. Fixed: that branch now prints a warning pointing at `ccvet status` and `~/.ccvet/audit.jsonl` as the way to confirm the hook is actually firing, rather than failing quiet a second time.
+- **`_is_ccvet_entry`'s shape match required exactly two tokens.** It recognized `"<path>/ccvet gate"` but not a hand-edited `"<path>/ccvet gate --dry-run"` (or any future flag `gate` itself gains), so a legitimately-edited entry would read as an unrelated hook to a later `uninstall`/re-`init`/`status` and be left duplicated or orphaned. Rather than just documenting the edge case, fixed it directly: `len(parts) >= 2` instead of `== 2`, a strict widening of what already matched, so it can't un-match anything that matched before.
+
+2 new regression tests (358 total, up from 357), 100% coverage on `init.py` maintained.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

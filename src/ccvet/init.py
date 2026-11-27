@@ -47,10 +47,25 @@ def _hook_binary() -> str:
     against `sys.executable` (never PATH-dependent; it's exactly how the
     currently-running process was launched) reliably finds it even when
     PATH wouldn't. Falls back to the bare name only if that sibling file
-    doesn't exist, which should be rare.
+    doesn't exist (e.g. `python -m ccvet.cli init` from a source
+    checkout with no installed console script at all) - rare, but
+    silently falling back to the exact bare-name shape this function
+    exists to avoid would reintroduce the same bug it just fixed, just
+    rarely, so this prints a warning rather than returning quietly.
     """
     candidate = Path(sys.executable).parent / "ccvet"
-    return str(candidate) if candidate.exists() else "ccvet"
+    if candidate.exists():
+        return str(candidate)
+    print(
+        "Warning: could not find a `ccvet` executable next to the running "
+        "interpreter, so the hook is being wired with the bare \"ccvet\" "
+        "command. This may not resolve inside Claude Code's own "
+        "hook-spawning shell if that shell doesn't share this one's PATH "
+        "(see the PATH note in Docs/hook-contract.md). Run `ccvet status` "
+        "and check `~/.ccvet/audit.jsonl` after a real tool call to confirm "
+        "the hook is actually firing."
+    )
+    return "ccvet"
 
 
 LOCAL_SERVER_CANDIDATES = [
@@ -79,19 +94,23 @@ def _load(path: Path) -> dict:
 
 
 def _is_ccvet_entry(entry: dict) -> bool:
-    # Matches by shape (last token "gate", the token before it a path
-    # whose basename is "ccvet"), not by exact string equality to one
-    # fixed command - the command string now bakes in an install-
-    # specific absolute path (see _hook_binary), which changes across
-    # reinstalls/venvs. Matching by shape means re-running `ccvet init`
-    # after reinstalling elsewhere replaces the old entry in place
-    # instead of leaving a stale, now-wrong absolute path sitting
-    # alongside a second, newly-added one.
+    # Matches by shape (second token "gate", the token before it a path
+    # whose basename is "ccvet", anything or nothing after), not by
+    # exact string equality to one fixed command - the command string
+    # now bakes in an install-specific absolute path (see _hook_binary),
+    # which changes across reinstalls/venvs. Matching by shape means
+    # re-running `ccvet init` after reinstalling elsewhere replaces the
+    # old entry in place instead of leaving a stale, now-wrong absolute
+    # path sitting alongside a second, newly-added one. Deliberately
+    # `>= 2` rather than `== 2`: a hand-edited "ccvet gate --dry-run" (or
+    # any future flag ccvet itself ever adds after "gate") must still be
+    # recognized by a later re-init/uninstall/status, not treated as an
+    # unrelated hook and left duplicated or orphaned.
     for hook in entry.get("hooks", []):
         if hook.get("type") != "command":
             continue
         parts = hook.get("command", "").strip().split()
-        if len(parts) == 2 and parts[1] == HOOK_SUBCOMMAND and Path(parts[0]).name == "ccvet":
+        if len(parts) >= 2 and parts[1] == HOOK_SUBCOMMAND and Path(parts[0]).name == "ccvet":
             return True
     return False
 

@@ -79,6 +79,11 @@ A different kind of review, a sandboxed round-trip test of the actual `init`/`st
 
 Fixed and covered by regression tests, including a real end-to-end reproduction (a stripped-`PATH` subshell actually failing to resolve the bare command, then actually resolving the absolute-path one) alongside the unit tests.
 
+Two further nits on those fixes, both closed rather than left as caveats:
+
+- **The absolute-path resolution's own fallback was silent.** When no `ccvet` binary sits next to the running interpreter (the rare case of `python -m ccvet.cli init` from a source checkout with no installed console script), `_hook_binary()` quietly wrote the bare `"ccvet"` name again, the exact shape the fix above exists to avoid, just on a rarer path, with nothing telling the user it happened. Fixed: that branch now prints a warning pointing at `ccvet status` and `~/.ccvet/audit.jsonl` as the way to confirm the hook is actually firing.
+- **The shape match required exactly two tokens.** `_is_ccvet_entry` recognized `"<path>/ccvet gate"` but not a hand-edited `"<path>/ccvet gate --dry-run"` (or any future flag ccvet itself gains after `gate`), so a legitimately-edited entry would read as an unrelated hook to a later `uninstall`/re-`init`/`status`, left duplicated or orphaned. Fixed by matching "at least two tokens, second is `gate`" instead of "exactly two", a strict widening that can't un-match anything previously matched.
+
 ## Reporting a vulnerability
 
 If you find a way to make ccvet auto-approve something it clearly should not (a bypass of Layer 0's hard-coded guards in particular), please open an issue describing the command and the expected versus actual decision. If the bypass is severe enough that public disclosure before a fix would be actively harmful, say so in the issue and we'll coordinate privately first.

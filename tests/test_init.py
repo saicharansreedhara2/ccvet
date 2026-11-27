@@ -59,16 +59,31 @@ def test_merge_uses_an_absolute_path_when_the_sibling_binary_exists(tmp_path, mo
     assert command == f"{fake_venv_bin / 'ccvet'} gate"
 
 
-def test_merge_falls_back_to_bare_name_when_no_sibling_binary_exists(tmp_path, monkeypatch):
+def test_merge_falls_back_to_bare_name_when_no_sibling_binary_exists(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "executable", str(tmp_path / "nonexistent" / "python"))
 
     after = init.merge({})
     command = after["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert command == "ccvet gate"
 
+    # Found by review: falling back silently would reintroduce the exact
+    # PATH-resolution bug this module just fixed, just on a rarer path
+    # (no installed console script at all, e.g. a source-checkout `python
+    # -m ccvet.cli init`). Must warn, not go quiet.
+    assert "Warning" in capsys.readouterr().out
+
 
 def test_is_ccvet_entry_recognizes_an_absolute_path_command():
     entry = {"hooks": [{"type": "command", "command": "/some/venv/bin/ccvet gate"}]}
+    assert init._is_ccvet_entry(entry)
+
+
+def test_is_ccvet_entry_recognizes_a_hand_edited_command_with_trailing_flags():
+    # Found by review: a hand-edited "ccvet gate --dry-run" (or any
+    # future flag ccvet itself gains after "gate") must still be
+    # recognized by a later re-init/uninstall/status, not treated as an
+    # unrelated hook and left duplicated or orphaned.
+    entry = {"hooks": [{"type": "command", "command": "/some/venv/bin/ccvet gate --dry-run"}]}
     assert init._is_ccvet_entry(entry)
 
 
