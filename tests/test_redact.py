@@ -127,3 +127,24 @@ def test_redacts_basic_auth_via_curl_dash_dash_user_flag():
 def test_does_not_falsely_redact_an_ordinary_dash_u_flag_with_no_colon():
     text = "sort -u file.txt"
     assert redact.redact(text) == text
+
+
+def test_redacts_a_dash_u_password_containing_its_own_colon():
+    # Found by external review: curl/URLs don't forbid a colon inside
+    # the password itself. The password class previously excluded ":",
+    # so a password like "pa:ssword" only got partially redacted,
+    # leaking the tail after the second colon.
+    out = redact.redact("curl -u alice:pa:ssword https://example.com")
+    assert "ssword" not in out
+    assert out == "curl -u alice:***REDACTED*** https://example.com"
+
+
+def test_redacts_a_url_password_containing_its_own_colon():
+    # The worse half of the same finding: the URL pattern's password
+    # class also excluded ":", so a password containing one meant the
+    # class could never reach the required trailing "@" at all - the
+    # whole credential was left completely unredacted, not just
+    # partially.
+    out = redact.redact("curl https://alice:pa:ss@github.com/x")
+    assert "pa:ss" not in out
+    assert out == "curl https://alice:***REDACTED***@github.com/x"

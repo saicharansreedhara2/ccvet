@@ -149,6 +149,16 @@ Three regex gaps in `redact.py` itself, all confirmed before fixing:
 
 4 new regression tests in `test_audit.py`/`test_redact.py` covering all four fixes plus the negative cases (`PASSWORD_FILE=`, `--max-key-size=`, `ssh-keygen --public-key-path=`, `sort -u` with no colon, all still correctly untouched). 413 tests passing (up from 406), 100% coverage on `redact.py` and `audit.py` maintained. Re-verified end to end through the real hook path with a command combining both the `-u` flag and a bare `password=` assignment: both land redacted in `command` and `reason` alike.
 
+## Verification of v0.2.1: a password containing its own colon
+
+curl/URLs don't forbid a colon inside the password itself, and both the URL and `-u`/`--user` patterns assumed otherwise (their password character classes excluded `:`), found by a follow-up review:
+
+- **The URL case was the worse one: a password containing a colon meant the password class could never reach the required trailing `@` at all, so the whole credential was left completely unredacted**, not just partially - `https://alice:pa:ss@github.com/x` passed through untouched. Fixed by allowing a colon in the password portion of `_URL_CREDENTIALS_RE` (the username portion still correctly stops at the *first* colon, same convention URLs themselves use).
+- **The `-u`/`--user` case degraded more gracefully but still leaked a tail**: `-u alice:pa:ssword` redacted only up to the second colon, leaving `:ssword` exposed. Fixed the same way: the password group now captures everything after the first colon up to whitespace, colons included.
+- **`--cache-bypass=true` getting redacted (since "bypass" ends in "pass") is not a new issue - it's the already-documented over-inclusive-by-design tradeoff** (`MONKEY=banana` in the module's own docstring is the same shape), just a more realistic real-world example of it. No change; noted here only because it was raised alongside the two real fixes above.
+
+2 new regression tests (`test_redact.py`) for the colon-in-password case in both the URL and `-u`/`--user` shapes. 415 tests passing (up from 413), 100% coverage on `redact.py` maintained.
+
 ## Reporting a vulnerability
 
 If you find a way to make ccvet auto-approve something it clearly should not (a bypass of Layer 0's hard-coded guards in particular), please open an issue describing the command and the expected versus actual decision. If the bypass is severe enough that public disclosure before a fix would be actively harmful, say so in the issue and we'll coordinate privately first.

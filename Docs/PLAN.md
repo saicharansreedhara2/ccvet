@@ -294,6 +294,18 @@ Three regex gaps in `redact.py` itself, all confirmed before fixing:
 
 This is a security bug fix (closing a real leak in the just-added redaction), not new classification behavior, so it's a **patch** release per the versioning rule.
 
+**Released as v0.2.1 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live reproduction of the `reason`-field leak on the real built wheel, then tagged and pushed.
+
+## Verification of v0.2.1 (2026-11-27): a password containing its own colon
+
+curl/URLs don't forbid a colon inside the password itself, and both the URL and `-u`/`--user` patterns assumed otherwise:
+
+- **The URL case was the worse one**: a password containing a colon meant the password character class could never reach the required trailing `@`, so the whole credential was left completely unredacted, not just partially - `https://alice:pa:ss@github.com/x` passed through untouched. Fixed by allowing a colon in the password portion of `_URL_CREDENTIALS_RE` (the username portion still correctly stops at the *first* colon only, matching URL convention itself).
+- **The `-u`/`--user` case degraded more gracefully but still leaked a tail**: `-u alice:pa:ssword` redacted only up to the second colon, leaving `:ssword` exposed. Fixed the same way - the password group now captures everything after the first colon up to whitespace, colons included.
+- **`--cache-bypass=true` getting redacted isn't a new issue**, it's the already-documented over-inclusive-by-design tradeoff (`MONKEY=banana` in the module's own docstring is the same shape, "bypass" ends in "pass"), just flagged alongside the two real fixes above rather than something new to fix.
+
+2 new regression tests for the colon-in-password case in both shapes. 415 tests passing (up from 413), 100% coverage on `redact.py` maintained.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

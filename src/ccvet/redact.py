@@ -25,13 +25,22 @@ _REDACTED = "***REDACTED***"
 
 _AUTH_BEARER_RE = re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.IGNORECASE)
 _AUTH_BASIC_RE = re.compile(r"(Authorization:\s*Basic\s+)\S+", re.IGNORECASE)
-_URL_CREDENTIALS_RE = re.compile(r"(://[^/\s:@]+:)[^/\s:@]+(@)")
-# curl's -u/--user USER:PASS basic-auth flag: found by external review,
-# a second shape for the same "credentials glued to a username by a
-# colon" idea the URL pattern above already covers, just not behind a
-# URL. The username isn't the secret, same as the URL case - keep it
-# visible, redact only the password half.
-_BASIC_AUTH_FLAG_RE = re.compile(r"((?:^|\s)(?:-u|--user)[ =]+)([^\s:]+):([^\s:]+)")
+# The username is split off at the *first* colon only (": " further in
+# is part of the password, not a second field) - found by external
+# review: an earlier version excluded ":" from the password class too,
+# so a password containing its own colon (legal; curl/URLs don't
+# forbid it) either leaked a trailing tail after a partial redaction
+# (the -u/--user case) or, worse, matched nothing at all and left the
+# whole credential unredacted (the URL case, since the password class
+# couldn't cross the colon to ever reach the required trailing "@").
+_URL_CREDENTIALS_RE = re.compile(r"(://[^/\s:@]+:)[^/\s@]+(@)")
+# curl's -u/--user USER:PASS basic-auth flag: a second shape for the
+# same "credentials glued to a username by a colon" idea the URL
+# pattern above already covers, just not behind a URL. The username
+# isn't the secret, same as the URL case - keep it visible, redact
+# only the password half (everything after the first colon up to
+# whitespace, which may itself contain colons - see note above).
+_BASIC_AUTH_FLAG_RE = re.compile(r"((?:^|\s)(?:-u|--user)[ =]+)([^\s:]+):(\S+)")
 _KNOWN_TOKEN_PREFIXES_RE = re.compile(
     r"\b(?:"
     r"sk-[A-Za-z0-9_-]{10,}"              # OpenAI-style
