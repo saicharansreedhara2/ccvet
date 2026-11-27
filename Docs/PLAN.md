@@ -339,6 +339,20 @@ Two findings, one fixed, one documented as an accepted limitation:
 
 2 new regression tests pinning the specific-match wording in both deny messages. 421 tests passing (up from 419), 100% coverage on `rules.py` maintained.
 
+**Released as v0.2.5 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, then tagged and pushed.
+
+## Verification of v0.2.5 (2026-11-27): the named match itself could be a live secret
+
+The fix above surfaces the actual matched argument, but for `secret_path_guard`'s generic token/secret/credential-NAME branch, that argument can itself *be* a raw secret value - confirmed directly: `curl --header "Authorization: token=<live token>"` put the real token straight into the deny message. Worse, this reaches further than the audit log: `permissionDecisionReason` is also the hook message Claude Code displays live and records in the session transcript, a durable store ccvet doesn't own and can't redact after the fact.
+
+The review correctly pointed out this wasn't new or isolated: the same raw-argument echo has always existed in the far more common `ASK_PROGRAMS` fallback (`f"{program} {' '.join(args)}"`), confirmed with `curl --header apikey=AKIAIOSFODNN7EXAMPLE https://x` surfacing the key verbatim in its `ask` reason. Patching just the `secret_path_guard` f-string would have fixed only the narrower case - exactly the mistake the v0.2.1-v0.2.4 rounds made chasing individual `redact.py` regex gaps one at a time.
+
+Fixed at the single choke point instead: every `Verdict` factory (`verdict.py`) now redacts its `reason` centrally, so any reason built anywhere in the codebase, present or future, is covered without needing to remember to call `redact.redact()` at each construction site. Confirmed this also fixes the `ask`-path echo, not just the `secret_path_guard` case. Simplified `rules.py` back to plain, unredacted f-string construction accordingly - the manual `redact.redact()` calls added for the narrower fix became both unnecessary and (see below) actively harmful once the centralized pass existed too.
+
+This surfaced a second, more fundamental bug in `redact.py` itself: every value-capturing pattern used an unbounded `\S+`-style capture with nothing excluded but whitespace, so a value immediately followed by message punctuation with no space - most concretely, `f"...({value})"` - had that punctuation silently swallowed into the match and dropped. Confirmed this bites redacting already-redacted text too (which now happens routinely, since the centralized fix can run on top of a caller's own prior redaction): a correctly-preserved closing paren from a first pass got eaten on a second pass. Fixed by excluding `)`, `]`, `}`, `,`, and `;` from "what counts as the value" in every affected pattern - a real secret essentially never ends in one of these - and confirmed `redact.redact()` is now idempotent.
+
+8 new regression tests across `test_verdict.py` (new) and `test_redact.py`. 431 tests passing (up from 421), 100% coverage on `redact.py`, `rules.py`, and `verdict.py` maintained. Re-verified end to end through the real hook path: the live hook response itself now shows the redacted value, not just the audit log.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

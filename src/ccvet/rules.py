@@ -107,6 +107,19 @@ def secret_path_guard(all_argvs):
     """
     from .verdict import Verdict
 
+    # The generic token/secret/credential-NAME hit is the argument text
+    # that matched, which can genuinely BE a raw secret value (confirmed:
+    # curl --header "Authorization: token=<live token>" put the token
+    # straight into this message). No manual redact.redact() call
+    # needed here, or anywhere else a Verdict reason is built - every
+    # Verdict factory (verdict.py) redacts its reason centrally, since
+    # permissionDecisionReason isn't just an internal detail: it's also
+    # the hook message Claude Code displays live and records in the
+    # session transcript, a second durable store ccvet doesn't own and
+    # can't redact after the fact. Patching individual f-strings like
+    # this one, instead of redacting once at that single choke point,
+    # is exactly what let the same leak shape go unfixed in the much
+    # more common ASK_PROGRAMS fallback below - see verdict.py.
     specific_hit = _find_secret_arg(all_argvs, specific=True)
     if specific_hit is not None:
         return Verdict.deny(f"command references a credential file path ({specific_hit})")

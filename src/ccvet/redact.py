@@ -23,8 +23,28 @@ import re
 
 _REDACTED = "***REDACTED***"
 
-_AUTH_BEARER_RE = re.compile(r"(Authorization:\s*Bearer\s+)\S+", re.IGNORECASE)
-_AUTH_BASIC_RE = re.compile(r"(Authorization:\s*Basic\s+)\S+", re.IGNORECASE)
+# Found by external review: every pattern below used to capture a
+# "value to redact" with a bare `\S+` (or an equally unbounded
+# character class) - everything up to the next whitespace, nothing
+# else excluded. That's fine when the value is followed by whitespace,
+# but several of this module's own call sites embed a redacted value
+# straight into a larger message via an f-string, e.g.
+# `f"...({hit})"`, where the very next character is a closing ")" with
+# no space before it. `\S+` doesn't know that ")" belongs to the
+# surrounding message, not the value, so it swallows it too, and the
+# replacement (which doesn't reproduce whatever got swallowed) quietly
+# drops it from the output. This matters more than once per message,
+# too: redact() is designed to be safely re-run on text that may
+# already contain a prior redaction (Verdict's reason is redacted once
+# centrally, on top of whatever a caller may have already redacted),
+# so a value capture that swallows trailing punctuation on one pass
+# compounds on a second pass. A real secret essentially never ends in
+# one of these characters, so excluding them from "what counts as the
+# value" costs nothing in practice.
+_VALUE = r"[^\s)\]},;]"
+
+_AUTH_BEARER_RE = re.compile(r"(Authorization:\s*Bearer\s+)" + _VALUE + "+", re.IGNORECASE)
+_AUTH_BASIC_RE = re.compile(r"(Authorization:\s*Basic\s+)" + _VALUE + "+", re.IGNORECASE)
 # The username is split off at the *first* colon only (": " further in
 # is part of the password, not a second field) - found by external
 # review: an earlier version excluded ":" from the password class too,
@@ -58,14 +78,14 @@ _AUTH_BASIC_RE = re.compile(r"(Authorization:\s*Basic\s+)\S+", re.IGNORECASE)
 # with no "?"/"#" following still redacts correctly (confirmed:
 # "https://alice:8443@host" redacts), and a password containing "?"/"#"
 # anywhere else in it redacts correctly too.
-_URL_CREDENTIALS_RE = re.compile(r"(://[^/\s:@?#]+:)(?!\d+[?#])([^/\s@]+)(@)")
+_URL_CREDENTIALS_RE = re.compile(r"(://[^/\s:@?#]+:)(?!\d+[?#])([^/\s@)\]},;]+)(@)")
 # curl's -u/--user USER:PASS basic-auth flag: a second shape for the
 # same "credentials glued to a username by a colon" idea the URL
 # pattern above already covers, just not behind a URL. The username
 # isn't the secret, same as the URL case - keep it visible, redact
 # only the password half (everything after the first colon up to
 # whitespace, which may itself contain colons - see note above).
-_BASIC_AUTH_FLAG_RE = re.compile(r"((?:^|\s)(?:-u|--user)[ =]+)([^\s:]+):(\S+)")
+_BASIC_AUTH_FLAG_RE = re.compile(r"((?:^|\s)(?:-u|--user)[ =]+)([^\s:]+):(" + _VALUE + "+)")
 _KNOWN_TOKEN_PREFIXES_RE = re.compile(
     r"\b(?:"
     r"sk-[A-Za-z0-9_-]{10,}"              # OpenAI-style
@@ -88,7 +108,7 @@ _KNOWN_TOKEN_PREFIXES_RE = re.compile(
 # here - `--max-key-size=100` still correctly doesn't match, since the
 # name has to end in one of the literal keywords, and "size" isn't one.
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"\b((?:[A-Za-z_][A-Za-z0-9_-]*)?(?:TOKEN|SECRET|KEY|PASSWORD|PASS|CREDENTIAL)S?=)\S+",
+    r"\b((?:[A-Za-z_][A-Za-z0-9_-]*)?(?:TOKEN|SECRET|KEY|PASSWORD|PASS|CREDENTIAL)S?=)" + _VALUE + "+",
     re.IGNORECASE,
 )
 

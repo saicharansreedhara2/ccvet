@@ -16,6 +16,8 @@ config file. Only the generic program-list/gray-zone fallbacks set it True.
 
 from dataclasses import dataclass
 
+from . import redact
+
 _RANK = {"allow": 0, "ask": 1, "deny": 2}
 
 
@@ -28,21 +30,38 @@ class Verdict:
     def rank(self) -> int:
         return _RANK[self.decision]
 
+    # redact.redact() is applied here, once, rather than at each of the
+    # many call sites across rules.py/shell.py/sql_guard.py that build a
+    # reason by interpolating raw argv/command text - found by external
+    # review, twice: first that a deny reason could embed a live secret
+    # value (curl --header "Authorization: token=<live token>"), then
+    # that the *same* pattern already existed, unfixed, in the much more
+    # common ASK_PROGRAMS fallback (f"{program} {' '.join(args)}", the
+    # reason text for most non-read-only commands). Patching each f-
+    # string individually is exactly the kind of fix that's easy to
+    # apply inconsistently - as the first fix itself did, missing the
+    # ask path - so this redacts every reason uniformly at the one
+    # choke point every Verdict passes through, regardless of where it
+    # was built. This matters beyond audit.py's own redaction:
+    # `reason` is also `permissionDecisionReason`, the hook message
+    # Claude Code displays live and records in the session transcript,
+    # a durable store ccvet doesn't own and can't redact after the
+    # fact the way it redacts its own audit log.
     @staticmethod
     def allow(reason: str, overridable: bool = False) -> "Verdict":
-        return Verdict("allow", f"Allowed by ccvet: {reason}", overridable)
+        return Verdict("allow", f"Allowed by ccvet: {redact.redact(reason)}", overridable)
 
     @staticmethod
     def ask(reason: str, overridable: bool = False) -> "Verdict":
-        return Verdict("ask", f"ccvet: {reason}, escalating for your review", overridable)
+        return Verdict("ask", f"ccvet: {redact.redact(reason)}, escalating for your review", overridable)
 
     @staticmethod
     def deny(reason: str, overridable: bool = False) -> "Verdict":
-        return Verdict("deny", f"Blocked by ccvet: {reason}", overridable)
+        return Verdict("deny", f"Blocked by ccvet: {redact.redact(reason)}", overridable)
 
     @staticmethod
     def defer(reason: str) -> "Verdict":
-        return Verdict("defer", f"ccvet: {reason}")
+        return Verdict("defer", f"ccvet: {redact.redact(reason)}")
 
 
 def most_severe(verdicts: list) -> Verdict:

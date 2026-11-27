@@ -203,3 +203,33 @@ def test_redacts_a_purely_numeric_url_password_with_no_query_ambiguity():
     out = redact.redact("curl https://alice:8443@github.com")
     assert "8443" not in out
     assert out == "curl https://alice:***REDACTED***@github.com"
+
+
+def test_does_not_swallow_trailing_punctuation_after_a_redacted_value():
+    # Found by external review: every value-capturing pattern used a
+    # bare unbounded class (`\S+` or similar) with nothing excluded
+    # but whitespace, so a value immediately followed by message
+    # punctuation (no space in between) - most concretely, a value
+    # embedded as f"...({value})" - had that punctuation swallowed into
+    # the match and silently dropped, since the replacement doesn't
+    # reproduce whatever got captured. A real secret essentially never
+    # ends in one of ) ] } , ; , so excluding them from "the value"
+    # costs nothing in the cases that matter.
+    cases = [
+        ("Authorization: Bearer sk-live-abc123)", "Authorization: Bearer ***REDACTED***)"),
+        ("token=abc123)", "token=***REDACTED***)"),
+        ("curl -u alice:hunter2)", "curl -u alice:***REDACTED***)"),
+        ("https://alice:hunter2@host)", "https://alice:***REDACTED***@host)"),
+    ]
+    for text, expected in cases:
+        assert redact.redact(text) == expected, f"{text!r} lost its trailing punctuation"
+
+
+def test_redaction_is_idempotent_on_its_own_output():
+    # A value that's already been redacted once (e.g. by a caller doing
+    # its own defense-in-depth redaction before handing text to
+    # something that redacts again, like every Verdict factory does)
+    # must come out unchanged on a second pass, not mangled further.
+    once = redact.redact("curl --header Authorization:token=SKtopsecretabc https://x")
+    twice = redact.redact(once)
+    assert once == twice
