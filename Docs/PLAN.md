@@ -251,6 +251,19 @@ A checksum-verified re-check of v0.0.10 confirmed it changed only `status()` (cl
 
 4 new regression tests in `test_commands.py` (the crash reproduction, prefix-wording, suffix-wording, and an empty-`match`-key edge case for full coverage). 386 tests passing (up from 382), 100% coverage on `commands.py` maintained.
 
+**Released as v0.1.0 (2026-11-27)**: the versioning-correction release above, bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging (including a live crash-reproduction smoke test on the real built wheel), then tagged and pushed.
+
+## Verification of v0.1.0 (2026-11-27): the status crash's real bug was one level down, and it was serious
+
+A checksum-verified re-check of v0.1.0 found that the `isinstance(rule, dict)` guard added for the v0.0.10 crash stopped one level too early, and that the deeper version of the same gap was the most severe finding across ten review rounds so far - not a classification bypass, but something that could silently degrade ccvet's actual day-to-day value:
+
+- **A non-string `match` value (`match: 5`, `match: true`, `match: [a, b]`) still crashed `ccvet status`** - the same shape of bug, one level down (the rule item was a dict, but its `match` value wasn't a string, and `match = rule.get("match") or ""` only filters a *falsy* value). That alone would have been another instance of the same crash class. The real severity: `userpolicy.find_override()` has the identical gap, and `find_override()` isn't a diagnostic command - it runs from `shellrules.evaluate()` on **every single overridable verdict**, which includes every plain `AUTO_PROGRAMS` auto-allow (`ls`, `cat`, `grep`, `git status`, ...), not just the hard-coded safety-floor guards. Confirmed directly: a single `match: 5` rule anywhere in `policy.yaml` raised an uncaught `TypeError` from `re.search(5, command)` inside `find_override()`, caught by `gate.py`'s blanket exception handler and silently turned into `ask` for every overridable command, project-wide, with a generic "internal error" reason giving no hint a malformed policy rule was the cause. Fixed in both places with the same guard: `isinstance(pattern, str)` before doing anything with it, skipping (not crashing on, not raising past) anything else - the same tolerance `_load_file`'s non-dict-rule handling already had.
+- **Added, per the review's own suggestion**: `ccvet status` now counts and reports rules it couldn't evaluate (missing, empty, or non-string `match`) as an explicit "N rule(s) could not be evaluated" note, instead of silently skipping them with no visible trace - exactly the diagnostic gap behind the finding above.
+
+9 new regression tests across `test_userpolicy.py` and `test_commands.py` (395 total, up from 386), 100% coverage on `commands.py` and `userpolicy.py` maintained. Re-verified end to end through the real hook path: `ccvet gate` with a seeded `match: 5` rule now correctly allows `ls -la` instead of degrading it to a generic `ask`.
+
+This is a pure bug fix (the fixed behavior is "stop raising/crashing on a malformed rule", not a change to any classification decision), so per the versioning correction above it's a **patch** release, not minor.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

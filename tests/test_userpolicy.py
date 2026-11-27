@@ -1,6 +1,7 @@
 import re
 
 import pytest
+import yaml
 
 from ccvet import userpolicy
 from ccvet.shellrules import evaluate
@@ -96,6 +97,33 @@ def test_malformed_yaml_in_policy_file_degrades_to_no_rules(tmp_path):
 
     assert userpolicy.load_rules(str(tmp_path)) == []
     assert evaluate("docker build .", str(tmp_path)).decision == "ask"
+
+
+@pytest.mark.parametrize("bad_match", [True, 5, ["a", "b"], 3.14])
+def test_non_string_match_value_does_not_crash_find_override(tmp_path, bad_match):
+    # Found by external review, and the most severe finding of that
+    # round: `if not pattern: continue` only filters a *falsy* match
+    # value - a truthy non-string one (match: 5, match: true, match:
+    # [a, b]) reached `re.search(pattern, command)` unchanged, which
+    # raises TypeError. This isn't just a crash: find_override runs on
+    # EVERY overridable verdict, which includes every plain
+    # AUTO_PROGRAMS allow (ls, cat, grep, git status, ...), not just the
+    # hard-coded guards - so one bad value anywhere in policy.yaml
+    # raised on every single evaluate() call, and gate.py's blanket
+    # exception handler silently degraded every such command
+    # project-wide to "ask", with a generic internal-error reason giving
+    # no indication a malformed policy rule was the actual cause.
+    path = userpolicy.project_path(str(tmp_path))
+    path.parent.mkdir(parents=True)
+    path.write_text(yaml.dump({"rules": [{"match": bad_match, "verdict": "allow", "reason": "bad"}]}))
+
+    assert userpolicy.find_override("ls -la", str(tmp_path)) is None
+
+    # The real, worse-in-practice path: gate.py never sees a raw
+    # exception, but without the fix this degraded every overridable
+    # command (including plain auto-allowed ones) to "ask" project-wide.
+    assert evaluate("ls -la", str(tmp_path)).decision == "allow"
+    assert evaluate("git status", str(tmp_path)).decision == "allow"
 
 
 def test_non_dict_top_level_yaml_degrades_to_no_rules(tmp_path):

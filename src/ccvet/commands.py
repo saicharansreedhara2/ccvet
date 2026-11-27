@@ -58,6 +58,7 @@ def status(args) -> int:
         print(f"{label} hook ({path}): {'wired' if wired else 'not wired'}")
 
     unanchored_rules = []
+    unevaluable_count = 0
     for label, path in (("project", userpolicy.project_path(cwd)), ("global", userpolicy.GLOBAL_PATH)):
         rules = userpolicy._load_file(path)
         if path.exists():
@@ -66,18 +67,24 @@ def status(args) -> int:
             print(f"{label} policy ({path}): not present")
         for rule in rules:
             # Found by external review: userpolicy._load_file tolerates
-            # a malformed rules list (it just drops non-dict items in
-            # find_override's own loop) specifically so a broken
-            # policy.yaml can't take anything down - a hand-edited file
-            # with a bare string item ("- just a string" where a mapping
-            # was meant) still crashed this loop with an AttributeError,
-            # ironic for the one command whose job is telling you your
-            # policy is shaped wrong. Mirrors find_override's own guard.
-            if not isinstance(rule, dict):
+            # a malformed rules list (find_override's own loop skips
+            # anything it can't use) specifically so a broken
+            # policy.yaml can't take anything down. This loop mirrors
+            # the same two guards find_override uses - not just a
+            # non-dict rule item, but also a present-but-non-string
+            # match value (match: 5, match: true, match: [a, b]),
+            # which a plain `match = rule.get("match") or ""` lets
+            # through unchanged since only a *falsy* value was filtered
+            # out. The non-string case is the more serious one: it's
+            # not just a crash here, it's an uncaught TypeError from
+            # re.search() inside find_override, which runs on every
+            # overridable verdict (every plain AUTO_PROGRAMS allow
+            # included), degrading every such command project-wide to
+            # gate.py's generic "ask" fallback with no indication why.
+            if not isinstance(rule, dict) or not isinstance(rule.get("match"), str) or not rule.get("match"):
+                unevaluable_count += 1
                 continue
-            match = rule.get("match") or ""
-            if not match:
-                continue
+            match = rule["match"]
             starts, ends = match.startswith("^"), match.endswith("$")
             if starts and ends:
                 continue
@@ -95,6 +102,23 @@ def status(args) -> int:
             else:
                 kind = "substring search anywhere in the command text"
             unanchored_rules.append((label, match, kind))
+
+    if unevaluable_count:
+        # Surfaced rather than left silent: this is specifically the
+        # diagnostic gap external review flagged - a bad match value
+        # degrades every overridable command project-wide to a silent
+        # "ask" via find_override's own guard (same fix, see
+        # userpolicy.py), and the one command meant to explain why was
+        # either crashing on it or, once that was fixed, saying nothing
+        # at all. Deliberately doesn't name which rule/file, since
+        # pinpointing one among possibly several isn't worth the
+        # complexity here - "go look at your policy.yaml" is enough to
+        # act on.
+        print(
+            f"\nNote: {unevaluable_count} policy rule(s) could not be evaluated (missing, "
+            "empty, or non-string `match`) and are silently skipped rather than applied - "
+            "check your policy.yaml for a malformed entry."
+        )
 
     if unanchored_rules:
         # The ^...$ anchoring fix in commands.allow() only applies to a

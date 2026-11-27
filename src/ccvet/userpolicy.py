@@ -68,7 +68,20 @@ def find_override(command: str, cwd: str):
         if not isinstance(rule, dict):
             continue
         pattern = rule.get("match")
-        if not pattern:
+        # Found by external review: `if not pattern: continue` only
+        # filters out a *falsy* match value (None, "", 0, False) - a
+        # truthy non-string one (match: 5, match: true, match: [a, b])
+        # sailed through to re.search(pattern, command) below, which
+        # raises TypeError for a non-string/non-compiled-pattern first
+        # argument. That's not just a crash in some diagnostic command:
+        # this function runs on every single overridable verdict
+        # (which includes every plain AUTO_PROGRAMS allow, not just the
+        # hard-coded guards), so one bad value anywhere in policy.yaml
+        # raised on every evaluate() call, degrading every overridable
+        # command project-wide to gate.py's generic "ask" fallback -
+        # ccvet's entire reduce-prompts value collapsing silently, with
+        # no indication of why in the degraded reason string itself.
+        if not isinstance(pattern, str) or not pattern:
             continue
         try:
             if re.search(pattern, command):

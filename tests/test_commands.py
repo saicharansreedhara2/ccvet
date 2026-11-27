@@ -1,6 +1,9 @@
 import argparse
 import json
 
+import pytest
+import yaml
+
 from ccvet import audit, commands, config, init, userpolicy
 
 
@@ -155,6 +158,65 @@ def test_status_does_not_crash_on_a_non_dict_rule_entry(tmp_path, monkeypatch, c
 
     rc = commands.status(_ns())
     assert rc == 0
+
+
+@pytest.mark.parametrize("bad_match", [True, 5, ["a", "b"]])
+def test_status_does_not_crash_on_a_non_string_match_value(tmp_path, monkeypatch, bad_match):
+    # Found by external review: the non-dict-rule guard above doesn't
+    # extend to the match *value* - a dict rule with a non-string match
+    # (match: 5, match: true, match: [a, b]) still crashed this loop's
+    # match.startswith() with an AttributeError, one level past the
+    # previous fix. This is the same gap as find_override's own
+    # TypeError bug (see test_userpolicy.py), which is the far more
+    # severe half of this finding - that one silently degrades every
+    # overridable command project-wide to "ask", not just a crash here.
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    policy_path = userpolicy.project_path(str(tmp_path))
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text(yaml.dump({"rules": [{"match": bad_match, "verdict": "allow", "reason": "bad"}]}))
+
+    rc = commands.status(_ns())
+    assert rc == 0
+
+
+def test_status_reports_unevaluable_rule_count(tmp_path, monkeypatch, capsys):
+    # The diagnostic gap behind the crash above: a rule that can't be
+    # evaluated (non-dict, or a dict with a missing/non-string/empty
+    # match) used to either crash this command or, once that was fixed,
+    # say nothing at all - exactly the case where the user most needs
+    # `ccvet status` to explain why a project suddenly prompts for
+    # everything. Now counted and reported explicitly.
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    policy_path = userpolicy.project_path(str(tmp_path))
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text(yaml.dump({"rules": [{"match": 5, "verdict": "allow", "reason": "bad"}]}))
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "1 policy rule(s) could not be evaluated" in out
+
+
+def test_status_reports_no_unevaluable_rules_when_policy_is_clean(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    userpolicy.add_rule(r"^docker\ build\ \.$", "allow", "reviewed", use_global=False, cwd=str(tmp_path))
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "could not be evaluated" not in out
 
 
 def test_status_describes_a_prefix_anchored_rule_accurately(tmp_path, monkeypatch, capsys):
