@@ -353,6 +353,16 @@ This surfaced a second, more fundamental bug in `redact.py` itself: every value-
 
 8 new regression tests across `test_verdict.py` (new) and `test_redact.py`. 431 tests passing (up from 421), 100% coverage on `redact.py`, `rules.py`, and `verdict.py` maintained. Re-verified end to end through the real hook path: the live hook response itself now shows the redacted value, not just the audit log.
 
+**Released as v0.2.6 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live reproduction of both the deny-path and ask-path fixes on the real built wheel, then tagged and pushed.
+
+## Verification of v0.2.6 (2026-11-27): an unlabeled secret in a JSON body
+
+Every pattern in `redact.py` is shell-assignment-shaped (`NAME=value`), so a JSON request body's `"name": "value"` shape fell through unless the value itself happened to independently match a known provider prefix - confirmed directly: `curl -d '{"apikey":"ABCAAA12345"}'` reached the message verbatim, while `curl -d '{"api_key":"sk-..."}'` only happened to get caught because the value matched a provider prefix on its own, not because of the JSON structure. A plain `curl -d` API test with an unlabeled key is an everyday shape.
+
+Added `_JSON_SECRET_RE`, reusing the same keyword set and name-matching rule as the shell-assignment case (optional prefix, hyphen allowed, must end in the keyword), matched against a quoted JSON key instead of a bare identifier before `=`. Deliberately simple substring matching, not real JSON parsing - finds the key:value pair regardless of nesting depth. One nuance caught while verifying: redaction correctly fires for the realistic shell form (JSON wrapped in single quotes, the only form that's actually valid shell syntax) - an unquoted test command loses its double quotes to bashlex's own dequoting before `_JSON_SECRET_RE` ever sees them, but that's not a real gap, since that input was never valid shell syntax to begin with.
+
+6 new regression tests (436 total, up from 431), 100% coverage on `redact.py` maintained.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

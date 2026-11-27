@@ -192,6 +192,14 @@ This surfaced a second, more fundamental bug in `redact.py` itself, caught while
 
 8 new regression tests across `test_verdict.py` (new) and `test_redact.py`, covering the centralized redaction, the ask-path fix, the trailing-punctuation fix, and idempotence. 431 tests passing (up from 421), 100% coverage on `redact.py`, `rules.py`, and `verdict.py` maintained. Re-verified end to end through the real hook path: the live hook response itself, not just the audit log, now shows the redacted value.
 
+## Verification of v0.2.6: an unlabeled secret in a JSON body
+
+Every pattern in `redact.py` is shell-assignment-shaped (`NAME=value`), so a JSON request body's `"name": "value"` shape fell through entirely unless the value itself happened to independently match a known provider prefix - confirmed directly: `curl -d '{"apikey":"ABCAAA12345"}'` reached the message verbatim, while `curl -d '{"api_key":"sk-..."}'` only happened to get caught because the *value* matched the OpenAI-style prefix pattern on its own, not because of the JSON structure. A plain `curl -d` API test with an unlabeled key is an everyday shape, not a contrived one.
+
+Added a JSON-specific pattern reusing the same keyword set and name-matching rule as the shell-assignment case (optional prefix, hyphen allowed, must end in `TOKEN`/`SECRET`/`KEY`/`PASSWORD`/`PASS`/`CREDENTIAL`(S)), matched against a quoted JSON key instead of a bare identifier before `=`. Deliberately simple substring matching, consistent with the rest of this module, not real JSON parsing - it finds the key:value pair regardless of nesting depth, and doesn't need to understand escaped quotes inside a string value for the common case.
+
+6 new regression tests (436 total, up from 431), 100% coverage on `redact.py` maintained. Re-verified end to end through the real hook path with the realistic shell form (JSON wrapped in single quotes, the form that actually works in a real shell - an unquoted JSON body isn't valid shell syntax to begin with).
+
 ## Reporting a vulnerability
 
 If you find a way to make ccvet auto-approve something it clearly should not (a bypass of Layer 0's hard-coded guards in particular), please open an issue describing the command and the expected versus actual decision. If the bypass is severe enough that public disclosure before a fix would be actively harmful, say so in the issue and we'll coordinate privately first.

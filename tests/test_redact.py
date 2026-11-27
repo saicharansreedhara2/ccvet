@@ -233,3 +233,42 @@ def test_redaction_is_idempotent_on_its_own_output():
     once = redact.redact("curl --header Authorization:token=SKtopsecretabc https://x")
     twice = redact.redact(once)
     assert once == twice
+
+
+def test_redacts_an_unlabeled_secret_in_a_json_request_body():
+    # Found by external review: every pattern above is shell-
+    # assignment-shaped (NAME=value), so a JSON request body's
+    # "name": "value" shape fell through entirely unless the value
+    # itself happened to independently match a known provider prefix -
+    # curl -d '{"apikey":"ABCAAA12345"}' (an everyday way credentials
+    # get passed to a POST body) reached the message verbatim.
+    out = redact.redact('curl -d {"apikey":"ABCAAA12345"}')
+    assert "ABCAAA12345" not in out
+    assert out == 'curl -d {"apikey": "***REDACTED***"}'
+
+
+def test_redacts_a_json_secret_value_that_also_matches_a_provider_prefix():
+    # Confirms the JSON pattern and the provider-prefix pattern don't
+    # conflict when both would independently catch the same value.
+    out = redact.redact('curl -d {"api_key":"sk-abcdefghij0123456789"}')
+    assert "sk-abcdefghij0123456789" not in out
+
+
+def test_redacts_a_nested_json_secret():
+    # Deliberately simple substring matching, not real JSON parsing -
+    # this finds the key:value pair regardless of surrounding nesting.
+    out = redact.redact('curl -d {"data":{"nested":{"token":"deepsecret"}}}')
+    assert "deepsecret" not in out
+    assert out == 'curl -d {"data":{"nested":{"token": "***REDACTED***"}}}'
+
+
+def test_does_not_redact_a_json_key_that_merely_contains_but_does_not_end_in_a_keyword():
+    # Same rule as the shell-assignment case: the key has to actually
+    # *end* in one of the literal keywords.
+    text = 'curl -d {"max_key_size":100}'
+    assert redact.redact(text) == text
+
+
+def test_does_not_redact_an_ordinary_json_value():
+    text = 'curl -d {"name":"ordinary value"}'
+    assert redact.redact(text) == text

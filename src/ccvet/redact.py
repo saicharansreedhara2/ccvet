@@ -111,6 +111,21 @@ _SECRET_ASSIGNMENT_RE = re.compile(
     r"\b((?:[A-Za-z_][A-Za-z0-9_-]*)?(?:TOKEN|SECRET|KEY|PASSWORD|PASS|CREDENTIAL)S?=)" + _VALUE + "+",
     re.IGNORECASE,
 )
+# A JSON request body is an everyday way credentials get passed to
+# `curl -d`/`-X POST`, and every pattern above is shell-assignment-
+# shaped (NAME=value) - found by external review, JSON's `"name":
+# "value"` shape falls through entirely unless the value itself
+# happens to match a known provider prefix on its own. Same keyword
+# set and same name-matching rule as the assignment case (optional
+# prefix, hyphen allowed, must end in the keyword), just matched
+# against a quoted JSON key instead of a bare identifier before "=".
+# Deliberately simple substring matching, not real JSON parsing (this
+# module's whole approach) - `[^"]*` doesn't understand escaped quotes
+# inside a string value, an acceptable gap for a best-effort tool.
+_JSON_SECRET_RE = re.compile(
+    r'"((?:[A-Za-z_][A-Za-z0-9_-]*)?(?:TOKEN|SECRET|KEY|PASSWORD|PASS|CREDENTIAL)S?)"\s*:\s*"[^"]*"',
+    re.IGNORECASE,
+)
 
 
 def redact(text: str) -> str:
@@ -122,4 +137,5 @@ def redact(text: str) -> str:
     text = _BASIC_AUTH_FLAG_RE.sub(r"\1\2:" + _REDACTED, text)
     text = _KNOWN_TOKEN_PREFIXES_RE.sub(_REDACTED, text)
     text = _SECRET_ASSIGNMENT_RE.sub(r"\1" + _REDACTED, text)
+    text = _JSON_SECRET_RE.sub(r'"\1": "' + _REDACTED + '"', text)
     return text
