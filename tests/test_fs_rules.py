@@ -109,6 +109,38 @@ def test_read_credential_path_is_denied(tmp_path):
     assert verdict.decision == "deny"
 
 
+@pytest.mark.parametrize(
+    "relpath",
+    [
+        ".git-credentials",
+        ".config/gh/hosts.yml",
+        ".docker/config.json",
+        ".aws/sso/cache/abc123.json",
+    ],
+)
+def test_read_other_credential_stores_is_denied(tmp_path, relpath):
+    # Found by external review: the same class of gap .env was in
+    # 0.0.1, for other credential stores - each of these is exclusively
+    # a credential store by design (contrast .gitconfig, deliberately
+    # not added, see the next test and paths.SECRET_PATTERNS).
+    target = tmp_path / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    verdict = evaluate("Read", {"file_path": str(target)}, str(tmp_path))
+    assert verdict.decision == "deny"
+
+
+def test_gitconfig_and_sibling_gh_config_are_not_treated_as_credential_stores(tmp_path):
+    # Deliberate judgment call, not an oversight: .gitconfig is an
+    # ordinary config file that only atypically embeds a credential
+    # (unlike .git-credentials, which is nothing but a plaintext
+    # user:token@host store by design), and gh's own config.yml (sibling
+    # to the denied hosts.yml) carries no token either.
+    assert evaluate("Read", {"file_path": str(tmp_path / ".gitconfig")}, str(tmp_path)).decision != "deny"
+    gh_dir = tmp_path / ".config" / "gh"
+    gh_dir.mkdir(parents=True)
+    assert evaluate("Read", {"file_path": str(gh_dir / "config.yml")}, str(tmp_path)).decision != "deny"
+
+
 def test_similarly_named_file_is_not_falsely_flagged_as_secret(tmp_path):
     # Regression: "/etc/passwd" used to substring-match "/etc/passwd_notes.md".
     etc_dir = tmp_path / "etc"
@@ -133,6 +165,43 @@ def test_write_with_no_recognizable_path_field_asks_rather_than_crashes(tmp_path
     verdict = evaluate("Write", {"content": "hello"}, str(tmp_path))
     assert verdict.decision == "ask"
     assert "no recognizable path" in verdict.reason
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [".env.production", ".env", "credential", "**/.ssh/id_*", "/etc/passwd"],
+)
+def test_grep_glob_pattern_field_is_not_treated_as_a_path(tmp_path, pattern):
+    # Found by external review: "pattern" (a search term for Grep/Glob,
+    # not a filesystem path) used to be in _PATH_KEYS as a fallback, so
+    # it got resolved and checked against the credential-path list like
+    # any other path - a Grep for the literal text ".env.production", or
+    # a Glob for "**/.ssh/id_*", is an ordinary, harmless search that was
+    # denied outright with no scoping path involved at all.
+    grep_verdict = evaluate("Grep", {"pattern": pattern}, str(tmp_path))
+    assert grep_verdict.decision == "allow"
+    glob_verdict = evaluate("Glob", {"pattern": pattern}, str(tmp_path))
+    assert glob_verdict.decision == "allow"
+
+
+def test_grep_with_a_credential_path_as_the_scoping_path_still_denies(tmp_path):
+    # The fix above must not blind the check entirely - a real scoping
+    # "path" field pointed at a credential path is still a real read of
+    # that path and must still deny, same as it always has.
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    verdict = evaluate("Grep", {"pattern": "PRIVATE KEY", "path": str(ssh_dir / "id_rsa")}, str(tmp_path))
+    assert verdict.decision == "deny"
+
+
+def test_grep_with_no_path_field_at_all_is_allowed_not_asked(tmp_path):
+    # Found by external review: with no "path" and "pattern" no longer
+    # treated as one, a bare Grep(pattern=...) (search the whole cwd,
+    # an entirely ordinary case) used to fall to "ask, no recognizable
+    # path field" - but Grep/Glob are read-only by construction
+    # (Docs/risk-taxonomy.md), so this is an AUTO case, not a gray zone.
+    verdict = evaluate("Grep", {"pattern": "TODO"}, str(tmp_path))
+    assert verdict.decision == "allow"
 
 
 def test_write_to_package_manifest_asks(tmp_path):

@@ -24,6 +24,10 @@ SPECIFIC_SECRET_PATH_PATTERNS = (
     # .env.sample (equally conventional, safe documentation variants) -
     # a plain pattern can't make that distinction.
     ".netrc", ".npmrc", ".pypirc", ".envrc",
+    # Same four found by external review as paths.SECRET_PATTERNS, kept
+    # in sync with it - see the comment there for why .gitconfig is
+    # deliberately not included.
+    ".git-credentials", ".config/gh/hosts.yml", ".docker/config.json", ".aws/sso/cache",
 )
 GENERIC_SECRET_NAME_PATTERNS = ("token", "secret", "credential")
 NETWORK_PROGRAMS = {"curl", "wget", "nc", "netcat", "ssh", "scp", "rsync", "ftp"}
@@ -163,16 +167,30 @@ def _looks_like_home_directory_root(normalized_target: str) -> bool:
     return len(parts) == 2 and parts[0] in {"users", "home"}
 
 
-def _is_catastrophic_target(t: str) -> bool:
+def _is_catastrophic_target(t: str, catastrophic_set) -> bool:
+    # Takes the target set as a parameter rather than hardcoding
+    # CATASTROPHIC_RM_TARGETS: found by external review that chmod's own
+    # catastrophic-target check used to skip this function entirely (a
+    # plain `_normalize_target(t) in CATASTROPHIC_CHMOD_TARGETS` set
+    # check, no home-directory-root heuristic), so `chmod -R 777
+    # /Users/charan` (the spelled-out home path, the more likely form a
+    # model actually emits) only asked, while `rm -rf /Users/charan`
+    # already denied. The rm-side fix was never carried over to chmod,
+    # despite being just as catastrophic there (a world-writable home
+    # directory). A shared parameterized function, rather than reusing
+    # CATASTROPHIC_RM_TARGETS directly for chmod too, keeps rm's and
+    # chmod's target lists independent (chmod's deliberately omits rm's
+    # bare-wildcard entries like "*"/"/*"/".*", which are specific to a
+    # recursive delete, not a permission change).
     normalized = _normalize_target(t)
-    return normalized in CATASTROPHIC_RM_TARGETS or _looks_like_home_directory_root(normalized)
+    return normalized in catastrophic_set or _looks_like_home_directory_root(normalized)
 
 
 def _is_catastrophic_rm(args) -> bool:
     has_recursive = any(a.startswith("-") and "r" in a.lower() for a in args)
     has_force = any(a.startswith("-") and "f" in a.lower() for a in args)
     targets = [a for a in args if not a.startswith("-")]
-    hits_catastrophic = any(_is_catastrophic_target(t) for t in targets)
+    hits_catastrophic = any(_is_catastrophic_target(t, CATASTROPHIC_RM_TARGETS) for t in targets)
     return has_recursive and has_force and (hits_catastrophic or not targets)
 
 
@@ -191,7 +209,7 @@ def _is_catastrophic_chmod(args) -> bool:
     non_flag_args = [a for a in args if not a.startswith("-")]
     mode_hit = any(_is_full_permission_grant(a) for a in non_flag_args)
     targets = [a for a in non_flag_args if not _is_full_permission_grant(a)]
-    hits_catastrophic = any(_normalize_target(t) in CATASTROPHIC_CHMOD_TARGETS for t in targets)
+    hits_catastrophic = any(_is_catastrophic_target(t, CATASTROPHIC_CHMOD_TARGETS) for t in targets)
     return has_recursive and mode_hit and hits_catastrophic
 
 

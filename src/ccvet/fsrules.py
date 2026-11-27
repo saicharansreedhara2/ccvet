@@ -7,7 +7,19 @@ from .verdict import Verdict
 READ_ONLY_TOOLS = {"Read", "Grep", "Glob"}
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
 
-_PATH_KEYS = ("file_path", "path", "notebook_path", "pattern")
+# "pattern" deliberately excluded: found by external review, it used to
+# be in here as a fallback path field, but for Grep/Glob it's a search
+# term (what to look for), not a filesystem path (where to look) - a
+# Grep for the literal text ".env.production", or a Glob for
+# "**/.ssh/id_*", is an ordinary, harmless search, not a read of that
+# path. Running it through paths.resolve() and the secret-path check
+# produced false denies on totally ordinary searches (and, worse, an
+# inconsistent false allow whenever a benign "path" happened to be
+# present alongside a dangerous-looking "pattern", since "path" was
+# checked first and "pattern" was never looked at once that short-
+# circuited). Grep/Glob's real scoping field is "path", same as every
+# other tool here.
+_PATH_KEYS = ("file_path", "path", "notebook_path")
 
 
 def _path_from_input(tool_input: dict):
@@ -20,6 +32,13 @@ def _path_from_input(tool_input: dict):
 def evaluate(tool_name: str, tool_input: dict, cwd: str) -> Verdict:
     raw_path = _path_from_input(tool_input)
     if raw_path is None:
+        if tool_name in READ_ONLY_TOOLS:
+            # Grep/Glob commonly run with no scoping path at all (search
+            # the whole cwd) - read-only by construction (Docs/risk-
+            # taxonomy.md), with no path to even check against the
+            # secret-path list, so this is an ordinary case, not a
+            # gray-zone one to escalate.
+            return Verdict.allow(f"{tool_name} is read-only with no specific path given")
         return Verdict.ask(f"{tool_name} call with no recognizable path field, reviewing manually")
 
     resolved = paths.resolve(raw_path, cwd)

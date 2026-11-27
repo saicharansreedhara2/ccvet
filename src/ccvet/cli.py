@@ -58,8 +58,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     allow_help = "add a policy rule promoting a command to a verdict, so ccvet stops asking about it"
     allow_p = sub.add_parser("allow", help=allow_help, description=allow_help)
-    allow_p.add_argument("pattern", help="command text to match (treated as a literal string unless --regex)")
-    allow_p.add_argument("--regex", action="store_true", help="treat pattern as a regex instead of a literal string")
+    allow_p.add_argument(
+        "pattern",
+        help="command text to match: an exact match of the whole command unless --regex, "
+        "which searches the pattern anywhere in the command text instead",
+    )
+    allow_p.add_argument(
+        "--regex", action="store_true",
+        help="treat pattern as a regex searched anywhere in the command, instead of an exact whole-command match",
+    )
     allow_p.add_argument(
         "--verdict", choices=["allow", "ask", "deny"], default="allow",
         help="the decision to record for this pattern (default: allow)",

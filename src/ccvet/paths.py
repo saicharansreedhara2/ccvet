@@ -75,6 +75,23 @@ SECRET_PATTERNS = (
     # carries a registry auth token. .env is handled separately above
     # (is_dangerous_env_filename), not listed here.
     ".netrc", ".npmrc", ".pypirc", ".envrc",
+    # Found by external review: the same ".env was the single biggest
+    # real-world secret location" gap, for other credential stores.
+    # Unlike .gitconfig (deliberately NOT listed here - it's an ordinary
+    # config file that only atypically embeds a credential, e.g. a
+    # rewritten remote URL; the same judgment call as .env vs
+    # .env.example), each of these four is *exclusively* a credential
+    # store by design, nothing else legitimately lives there:
+    # - .git-credentials: git's "store" credential helper writes plain
+    #   `https://user:token@host` lines here.
+    # - .config/gh/hosts.yml: the GitHub CLI's OAuth token, specifically
+    #   this file, not sibling gh config files like config.yml.
+    # - .docker/config.json: base64-encoded (not encrypted) registry
+    #   auth under "auths", the same risk tier as .npmrc/.pypirc above.
+    # - .aws/sso/cache: a directory of cached AWS SSO bearer tokens
+    #   (opaque, randomly-named files), matched at the directory level
+    #   since any file in it is a cached credential by construction.
+    ".git-credentials", ".config/gh/hosts.yml", ".docker/config.json", ".aws/sso/cache",
 )
 
 MANIFEST_PATTERNS = (

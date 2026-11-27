@@ -103,7 +103,20 @@ def log_view(args) -> int:
 
 def allow(args) -> int:
     cwd = os.getcwd()
-    pattern = args.pattern if args.regex else re.escape(args.pattern)
+    # Found by external review: userpolicy.find_override matches with a
+    # plain, unanchored re.search, so a literal (non-regex) pattern that
+    # was only escaped, not anchored, silently matched as a substring
+    # anywhere in the command - `ccvet allow "ls"` approved "ls -la",
+    # "lsof -i", and "false-ls-check" alike, not just "ls". A promotion
+    # the user believes is narrow ("allow exactly this command I just
+    # reviewed") was actually widening the allow surface to "allow
+    # anything containing this text", with no indication it had done so.
+    # --regex is the explicit, documented opt-in for anything broader
+    # than an exact match (the module docstring's own example, an
+    # unanchored-at-the-end prefix match, relies on this); the literal
+    # path now anchors to the whole command, matching what "literal
+    # string" actually implies to someone typing it.
+    pattern = args.pattern if args.regex else f"^{re.escape(args.pattern)}$"
     reason = args.reason or f"promoted via `ccvet allow` on {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
     try:
         path = userpolicy.add_rule(pattern, args.verdict, reason, use_global=args.global_, cwd=cwd)

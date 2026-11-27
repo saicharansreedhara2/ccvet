@@ -167,14 +167,34 @@ def test_status_handles_malformed_settings_json(tmp_path, monkeypatch, capsys):
     assert "invalid JSON" in out
 
 
-def test_allow_writes_an_escaped_literal_rule(tmp_path, monkeypatch, capsys):
+def test_allow_writes_an_escaped_and_anchored_literal_rule(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     commands.allow(_ns(pattern="docker build .", regex=False, verdict="allow", global_=False, reason=None))
 
     rules = userpolicy._load_file(tmp_path / ".ccvet" / "policy.yaml")
     assert len(rules) == 1
-    # a literal "." must be escaped, not treated as a regex wildcard
-    assert rules[0]["match"] == r"docker\ build\ \."
+    # a literal "." must be escaped, not treated as a regex wildcard, and
+    # anchored to the whole command - not just escaped, see
+    # test_literal_allow_pattern_does_not_match_as_an_unanchored_substring
+    assert rules[0]["match"] == r"^docker\ build\ \.$"
+
+
+def test_literal_allow_pattern_does_not_match_as_an_unanchored_substring(tmp_path, monkeypatch):
+    # Found by external review: before anchoring, `ccvet allow "ls"`
+    # stored the bare regex "ls", which re.search (unanchored) matched
+    # inside "ls -la", "lsof -i", and "false-ls-check" alike (all three
+    # otherwise land on the generic, overridable "ask" baseline) - a
+    # promotion the user believes is narrow silently widening the allow
+    # surface to "contains this text anywhere", with no indication it
+    # had done so.
+    monkeypatch.chdir(tmp_path)
+    commands.allow(_ns(pattern="lsof -i", regex=False, verdict="allow", global_=False, reason=None))
+
+    from ccvet.shellrules import evaluate
+
+    assert evaluate("lsof -i", str(tmp_path)).decision == "allow"
+    assert evaluate("lsof -iTCP", str(tmp_path)).decision != "allow"
+    assert evaluate("false-ls-check", str(tmp_path)).decision != "allow"
 
 
 def test_allow_with_regex_flag_stores_pattern_verbatim(tmp_path, monkeypatch):
