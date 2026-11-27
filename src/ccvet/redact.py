@@ -33,7 +33,17 @@ _AUTH_BASIC_RE = re.compile(r"(Authorization:\s*Basic\s+)\S+", re.IGNORECASE)
 # (the -u/--user case) or, worse, matched nothing at all and left the
 # whole credential unredacted (the URL case, since the password class
 # couldn't cross the colon to ever reach the required trailing "@").
-_URL_CREDENTIALS_RE = re.compile(r"(://[^/\s:@]+:)[^/\s@]+(@)")
+#
+# "?" is excluded from both halves (on top of "/"): widening the
+# password class to allow ":" had a side effect, found by a follow-up
+# review, of also sweeping up a port-plus-query-string shape with an
+# "@" in a query value before any path slash, e.g.
+# "https://api.host:8443?email=a@b.com" misread as credentials with
+# "8443?email=a" as the password. An unencoded "?" unambiguously starts
+# a query string in real URL syntax; a literal one could never be part
+# of an actual username or password, so excluding it is a precise
+# fix, not a heuristic.
+_URL_CREDENTIALS_RE = re.compile(r"(://[^/\s:@?]+:)[^/\s@?]+(@)")
 # curl's -u/--user USER:PASS basic-auth flag: a second shape for the
 # same "credentials glued to a username by a colon" idea the URL
 # pattern above already covers, just not behind a URL. The username

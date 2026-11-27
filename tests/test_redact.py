@@ -148,3 +148,22 @@ def test_redacts_a_url_password_containing_its_own_colon():
     out = redact.redact("curl https://alice:pa:ss@github.com/x")
     assert "pa:ss" not in out
     assert out == "curl https://alice:***REDACTED***@github.com/x"
+
+
+def test_does_not_misread_a_port_and_query_string_as_url_credentials():
+    # Found by external review, a regression from the colon-widening
+    # fix above: allowing ":" in the password class had the side effect
+    # of also sweeping up a port-plus-query-string shape with an "@" in
+    # a query value before any path slash, reading
+    # "https://api.host:8443?email=a@b.com" as credentials with
+    # "8443?email=a" as the password. An unencoded "?" unambiguously
+    # starts a query string in real URL syntax (never part of an actual
+    # username/password), so excluding it from both character classes
+    # fixes this precisely rather than heuristically.
+    cases = [
+        "curl https://api.host:8443?email=a@b.com",
+        "curl https://api.host:8443/v1?x=a@b.com",  # a path slash already blocked this one
+        "curl https://api.host:8443?x=1",  # no "@" at all
+    ]
+    for text in cases:
+        assert redact.redact(text) == text, f"{text!r} was incorrectly redacted"

@@ -159,6 +159,10 @@ curl/URLs don't forbid a colon inside the password itself, and both the URL and 
 
 2 new regression tests (`test_redact.py`) for the colon-in-password case in both the URL and `-u`/`--user` shapes. 415 tests passing (up from 413), 100% coverage on `redact.py` maintained.
 
+## Verification of v0.2.2: a regression from the colon-widening fix itself
+
+The colon-widening fix above had its own side effect, found by a follow-up review: allowing `:` in the URL password class also let it sweep up a port-plus-query-string shape with an `@` in a query value *before any path slash*, e.g. `https://api.host:8443?email=a@b.com` misread as credentials with `8443?email=a` as the password, writing `https://api.host:***REDACTED***@b.com` instead. Confirmed exactly, including that a path slash (`.../v1?x=a@b.com`) or the absence of any `@` already avoided it, so it's a narrow shape - but a real one, not a hypothetical. Correctly characterized by the review as log-noise only, not a security regression (it over-redacts, the already-accepted-safe direction of error), but worth fixing precisely rather than leaving as a known quirk, since the fix is exact rather than a heuristic: an unencoded `?` unambiguously starts a query string in real URL syntax and could never legitimately appear inside a username or password, so excluding it from both character classes (on top of `/`) closes the gap without any loss of precision elsewhere. 1 new regression test covering all three reported shapes. 416 tests passing (up from 415), 100% coverage on `redact.py` maintained.
+
 ## Reporting a vulnerability
 
 If you find a way to make ccvet auto-approve something it clearly should not (a bypass of Layer 0's hard-coded guards in particular), please open an issue describing the command and the expected versus actual decision. If the bypass is severe enough that public disclosure before a fix would be actively harmful, say so in the issue and we'll coordinate privately first.

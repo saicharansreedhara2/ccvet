@@ -306,6 +306,14 @@ curl/URLs don't forbid a colon inside the password itself, and both the URL and 
 
 2 new regression tests for the colon-in-password case in both shapes. 415 tests passing (up from 413), 100% coverage on `redact.py` maintained.
 
+**Released as v0.2.2 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live reproduction of both colon-in-password shapes on the real built wheel, then tagged and pushed.
+
+## Verification of v0.2.2 (2026-11-27): the colon-widening fix had its own regression
+
+Allowing `:` in the URL password class (v0.2.2's own fix) had a side effect: it also let the password class sweep up a port-plus-query-string shape with an `@` in a query value *before any path slash*, e.g. `https://api.host:8443?email=a@b.com` misread as credentials with `8443?email=a` as the password. Confirmed exactly, including the two negative cases that already avoided it (a path slash before the `?`, or no `@` at all). Correctly characterized as log-noise only (over-redaction, the already-accepted-safe direction), not a security regression, but fixed precisely rather than left as a known quirk: an unencoded `?` unambiguously starts a query string in real URL syntax and could never legitimately appear inside a username or password, so excluding it from both character classes (alongside `/`) closes the gap exactly, not heuristically.
+
+1 new regression test covering all three reported shapes. 416 tests passing (up from 415), 100% coverage on `redact.py` maintained.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)
