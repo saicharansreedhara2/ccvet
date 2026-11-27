@@ -156,10 +156,11 @@ def test_does_not_misread_a_port_and_query_string_as_url_credentials():
     # of also sweeping up a port-plus-query-string shape with an "@" in
     # a query value before any path slash, reading
     # "https://api.host:8443?email=a@b.com" as credentials with
-    # "8443?email=a" as the password. An unencoded "?" unambiguously
-    # starts a query string in real URL syntax (never part of an actual
-    # username/password), so excluding it from both character classes
-    # fixes this precisely rather than heuristically.
+    # "8443?email=a" as the password. Rejected via a targeted negative
+    # lookahead for "digits immediately followed by ?/#" (the port+
+    # query/fragment shape specifically), not a blanket exclusion of
+    # "?"/"#" - see the next two tests for why the blanket version was
+    # itself wrong.
     cases = [
         "curl https://api.host:8443?email=a@b.com",
         "curl https://api.host:8443/v1?x=a@b.com",  # a path slash already blocked this one
@@ -167,3 +168,38 @@ def test_does_not_misread_a_port_and_query_string_as_url_credentials():
     ]
     for text in cases:
         assert redact.redact(text) == text, f"{text!r} was incorrectly redacted"
+
+
+def test_redacts_a_url_password_containing_a_literal_question_mark():
+    # Found by external review: a blanket "?" exclusion (the first
+    # attempt at the port+query false positive above) couldn't tell
+    # "this ? starts a password" from "this ? starts a query string" -
+    # both are the same text in isolation - so it also silently leaked
+    # a password that legitimately (if, per RFC 3986, already
+    # technically-malformed-URL-syntax-either-way) contains a literal
+    # "?" and is embedded directly in a URL. The fix distinguishes them
+    # by requiring the false-positive shape to be *pure digits*
+    # immediately before the "?" (a port number); "alice" isn't digits,
+    # so this one correctly redacts.
+    out = redact.redact("git clone https://alice:pa?sword@github.com/x.git")
+    assert "pa?sword" not in out
+    assert out == "git clone https://alice:***REDACTED***@github.com/x.git"
+
+
+def test_redacts_a_url_password_containing_a_literal_hash():
+    # Found by external review: the previous fix excluded "?" but not
+    # "#", even though RFC 3986 disallows both in userinfo equally -
+    # an inconsistency in itself. The negative-lookahead fix treats
+    # them the same way.
+    out = redact.redact("git clone https://alice:pa#sword@github.com/x.git")
+    assert "pa#sword" not in out
+    assert out == "git clone https://alice:***REDACTED***@github.com/x.git"
+
+
+def test_redacts_a_purely_numeric_url_password_with_no_query_ambiguity():
+    # A numeric password with nothing ambiguous after it (no "?"/"#"
+    # immediately following) must still redact - the lookahead rejects
+    # specifically "digits then ?/#", not "digits" on their own.
+    out = redact.redact("curl https://alice:8443@github.com")
+    assert "8443" not in out
+    assert out == "curl https://alice:***REDACTED***@github.com"

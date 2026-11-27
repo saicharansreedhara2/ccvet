@@ -314,6 +314,16 @@ Allowing `:` in the URL password class (v0.2.2's own fix) had a side effect: it 
 
 1 new regression test covering all three reported shapes. 416 tests passing (up from 415), 100% coverage on `redact.py` maintained.
 
+**Released as v0.2.3 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live reproduction of the port+query false positive on the real built wheel, then tagged and pushed.
+
+## Verification of v0.2.3 (2026-11-27): the "?" fix's own justification was too strong
+
+The v0.2.3 fix claimed an unencoded `?` "could never legitimately appear inside a username or password" - true about strict URL syntax (RFC 3986 disallows a raw `?` in userinfo), but too strong about what real secrets actually contain. A follow-up review found the consequence: excluding `?` (and, by the same RFC rule, `#`) from the password class entirely meant a password that *does* contain one, interpolated raw into a URL, silently redacted to nothing - `https://alice:pa?sword@github.com/x.git` passed through with the real secret left in the log. Also caught the inconsistency: `?` was excluded but `#` wasn't, despite RFC 3986 disallowing both equally.
+
+Replaced the blanket exclusion with a targeted negative lookahead rejecting only the actual problem shape: a port number (pure digits) immediately followed by `?` or `#`. This tells apart "this `?`/`#` starts a query string" (digits right before it) from "this `?`/`#` is part of a password" (anything else right before it) - the structural signal the blanket version ignored. Confirmed all cases hold simultaneously: the original port+query false positive stays fixed, a password containing a literal `?` or `#` now redacts correctly, and a purely numeric password with nothing ambiguous following it still redacts too.
+
+4 new regression tests (419 total, up from 416), 100% coverage on `redact.py` maintained. Re-verified end to end through the real hook path.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)
