@@ -65,28 +65,50 @@ def status(args) -> int:
         else:
             print(f"{label} policy ({path}): not present")
         for rule in rules:
+            # Found by external review: userpolicy._load_file tolerates
+            # a malformed rules list (it just drops non-dict items in
+            # find_override's own loop) specifically so a broken
+            # policy.yaml can't take anything down - a hand-edited file
+            # with a bare string item ("- just a string" where a mapping
+            # was meant) still crashed this loop with an AttributeError,
+            # ironic for the one command whose job is telling you your
+            # policy is shaped wrong. Mirrors find_override's own guard.
+            if not isinstance(rule, dict):
+                continue
             match = rule.get("match") or ""
-            if match and not (match.startswith("^") and match.endswith("$")):
-                unanchored_rules.append((label, match))
+            if not match:
+                continue
+            starts, ends = match.startswith("^"), match.endswith("$")
+            if starts and ends:
+                continue
+            # Found by external review: a rule anchored at only one end
+            # (e.g. "^docker build\." from this project's own docstring
+            # example) is a prefix or suffix match, not an unanchored
+            # substring search - the original wording called every one
+            # of these a "substring search anywhere", which overstated
+            # the reach of a partially-anchored pattern. Each rule gets
+            # its own accurate description instead of one blanket claim.
+            if starts:
+                kind = "prefix search (anchored at the start, not the end)"
+            elif ends:
+                kind = "suffix search (anchored at the end, not the start)"
+            else:
+                kind = "substring search anywhere in the command text"
+            unanchored_rules.append((label, match, kind))
 
     if unanchored_rules:
-        # Found by external review: the ^...$ anchoring fix in
-        # commands.allow() only applies to a rule written from this
-        # point forward. A rule already sitting in policy.yaml - written
-        # by a pre-0.0.9 ccvet, by hand, or by --regex deliberately -
-        # stays exactly as unanchored as it always was; upgrading ccvet
-        # does nothing to it. Can't safely auto-migrate: a stored
-        # pattern string carries no record of whether it was meant as an
-        # exact literal or a deliberately broad --regex, so silently
-        # rewriting it risks narrowing a rule someone wrote on purpose.
-        # Surfacing it here, read-only, lets the user decide.
-        print(
-            f"\nNote: {len(unanchored_rules)} policy rule(s) don't anchor to the "
-            "whole command (no leading ^ and trailing $), so they match as a "
-            "substring search anywhere in the command text:"
-        )
-        for label, match in unanchored_rules:
-            print(f"  [{label}] {match!r}")
+        # The ^...$ anchoring fix in commands.allow() only applies to a
+        # rule written from this point forward. A rule already sitting
+        # in policy.yaml - written by a pre-0.0.9 ccvet, by hand, or by
+        # --regex deliberately - stays exactly as it always was;
+        # upgrading ccvet does nothing to it. Can't safely auto-migrate:
+        # a stored pattern string carries no record of whether it was
+        # meant as an exact literal or a deliberately broad --regex, so
+        # silently rewriting it risks narrowing a rule someone wrote on
+        # purpose. Surfacing it here, read-only, lets the user decide.
+        print(f"\nNote: {len(unanchored_rules)} policy rule(s) don't fully anchor to the whole command:")
+        for label, match, kind in unanchored_rules:
+            print(f"  [{label}] {match!r} - matches as a {kind}")
         print(
             "If any of these were meant to allow one exact command rather than "
             "a deliberately broad pattern, re-run `ccvet allow` on it - as of "

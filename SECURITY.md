@@ -109,6 +109,15 @@ An independent re-check of v0.0.9 (checksum-verified against the actual PyPI upl
 
 1 new regression test in `test_commands.py` for the `ccvet status` warning, plus the pre-existing "does not warn about an anchored rule" negative case. 382 tests passing (up from 380).
 
+## Verification of v0.0.10 (2026-11-27): a crash in the new warning itself, and a wording nit
+
+A checksum-verified re-check of v0.0.10 confirmed it changed only `status()` (classification and `ccvet allow` behavior byte-identical to the already-verified v0.0.9), and that the new unanchored-rule warning behaves as documented. It also found a real crash in that same new code, ironic given what it's for:
+
+- **`ccvet status` crashed on a hand-edited `policy.yaml` with a non-mapping rule item** (`rules:\n  - just a string\n`), with an `AttributeError` from calling `.get("match")` on a plain string. Confirmed directly, and confirmed the gate path was never affected: `userpolicy.find_override()` already guards exactly this case (`if not isinstance(rule, dict): continue`), specifically so a malformed policy file can't take anything down - the new `status()` loop was the one place that check hadn't been carried over to. Fixed by mirroring the same guard. Severity note: this was never a protection gap (the hard-coded floor and the override pipeline were both unaffected the whole time), just a crash in a diagnostic command on an ordinary YAML mistake (a misplaced dash, a half-finished edit).
+- **The warning's wording overstated reach for a partially-anchored rule.** A pattern like `^docker build\.` (this project's own docstring example) is anchored at the start, so it's a prefix match, not an "substring search anywhere in the command text" the way a fully unanchored pattern is. Flagging it at all is still reasonable (a prefix match covers more than one exact command), but the description was inaccurate. Fixed: each flagged rule now gets its own accurate description (prefix search, suffix search, or substring search anywhere), rather than one blanket claim for all three shapes.
+
+4 new regression tests in `test_commands.py` (the crash reproduction, the prefix-wording case, the suffix-wording case, and an empty-`match`-key edge case for full coverage). 386 tests passing (up from 382), 100% coverage on `commands.py` maintained.
+
 ## Reporting a vulnerability
 
 If you find a way to make ccvet auto-approve something it clearly should not (a bypass of Layer 0's hard-coded guards in particular), please open an issue describing the command and the expected versus actual decision. If the bypass is severe enough that public disclosure before a fix would be actively harmful, say so in the issue and we'll coordinate privately first.

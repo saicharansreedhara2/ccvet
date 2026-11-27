@@ -236,6 +236,21 @@ An independent re-check (checksum-verified against the actual PyPI upload, not j
 
 2 new regression tests in `test_commands.py` (`test_status_warns_about_unanchored_policy_rules`, `test_status_does_not_warn_about_an_anchored_rule`). 382 tests passing (up from 380), 100% coverage on `commands.py` maintained.
 
+**Released as v0.0.10 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live `ccvet status` smoke test confirming the warning and the typo fix on the real built wheel, then tagged and pushed.
+
+## Versioning correction (2026-11-27): v0.0.10 was the last patch-only bump
+
+Ten releases (v0.0.1 through v0.0.10) all used the patch digit, each tied to an external review round. Decided this reads oddly (`0.0.10` next to `0.0.9` looks like it could be older at a glance) and that ten rounds of fixes is well past the point of still being "all patch, no minor." **This release becomes v0.1.0**, not v0.0.11. Going forward: patch bump for a pure bug fix, minor bump for anything that changes observable behavior (the v0.0.9 round's redirect-target ask-vs-deny tradeoff is the kind of thing that would have warranted a minor bump under this rule, in hindsight).
+
+## Verification of v0.0.10 (2026-11-27): a crash in the new warning itself, and a wording nit
+
+A checksum-verified re-check of v0.0.10 confirmed it changed only `status()` (classification and `ccvet allow` behavior byte-identical to the already-verified v0.0.9), and that the new unanchored-rule warning behaves as documented. It also found two real issues in that same new code:
+
+- **`ccvet status` crashed on a hand-edited `policy.yaml` with a non-mapping rule item** (`rules:\n  - just a string\n`), an `AttributeError` from calling `.get("match")` on a plain string. Confirmed directly, and confirmed the gate path was never affected: `userpolicy.find_override()` already guards exactly this case (`if not isinstance(rule, dict): continue`), specifically so a malformed policy file can't take anything down - the new `status()` loop was the one place that guard hadn't been carried over to. Fixed by mirroring it. Never a protection gap, just a crash in the one command whose job is telling you your policy is shaped wrong.
+- **The warning's wording overstated reach for a partially-anchored rule.** `^docker build\.` (this project's own docstring example) is anchored at the start, a prefix match, not an unanchored "substring search anywhere" the way a fully unanchored pattern is. Fixed: each flagged rule now gets its own accurate description (prefix search, suffix search, or substring search anywhere) instead of one blanket claim covering all three shapes.
+
+4 new regression tests in `test_commands.py` (the crash reproduction, prefix-wording, suffix-wording, and an empty-`match`-key edge case for full coverage). 386 tests passing (up from 382), 100% coverage on `commands.py` maintained.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

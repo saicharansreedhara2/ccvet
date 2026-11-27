@@ -85,7 +85,7 @@ def test_status_warns_about_unanchored_policy_rules(tmp_path, monkeypatch, capsy
     out = capsys.readouterr().out
     assert rc == 0
     assert "1 rule(s)" in out
-    assert "don't anchor" in out
+    assert "don't fully anchor" in out
     assert "'ls'" in out
 
 
@@ -100,7 +100,82 @@ def test_status_does_not_warn_about_an_anchored_rule(tmp_path, monkeypatch, caps
     rc = commands.status(_ns())
     out = capsys.readouterr().out
     assert rc == 0
-    assert "don't anchor" not in out
+    assert "don't fully anchor" not in out
+
+
+def test_status_describes_a_suffix_anchored_rule_accurately(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    userpolicy.add_rule(r"build\.$", "ask", "suffix rule", use_global=False, cwd=str(tmp_path))
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "suffix search" in out
+    assert "substring search anywhere" not in out
+
+
+def test_status_skips_a_rule_with_no_match_pattern(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    policy_path = userpolicy.project_path(str(tmp_path))
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text("rules:\n  - verdict: allow\n    reason: no match key at all\n")
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "don't fully anchor" not in out
+
+
+def test_status_does_not_crash_on_a_non_dict_rule_entry(tmp_path, monkeypatch, capsys):
+    # Found by external review: userpolicy._load_file deliberately
+    # tolerates a malformed rules list (find_override itself skips any
+    # non-dict item, specifically so a broken policy.yaml can't take
+    # anything down), but this status() loop's rule.get("match") crashed
+    # with an AttributeError on a hand-edited file with a bare string
+    # item - ironic for the one command whose job is telling you your
+    # policy is shaped wrong. The gate path was never affected (verified
+    # separately via find_override's own guard); this is specific to
+    # status()'s own loop.
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    policy_path = userpolicy.project_path(str(tmp_path))
+    policy_path.parent.mkdir(parents=True)
+    policy_path.write_text("rules:\n  - just a string\n")
+
+    rc = commands.status(_ns())
+    assert rc == 0
+
+
+def test_status_describes_a_prefix_anchored_rule_accurately(tmp_path, monkeypatch, capsys):
+    # Found by external review: a rule anchored at only one end (e.g.
+    # the project's own docstring example, "^docker build\.") is a
+    # prefix match, not an unanchored substring search - the original
+    # wording called every unanchored-at-either-end rule a "substring
+    # search anywhere", which overstated what a partially-anchored
+    # pattern actually does.
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    userpolicy.add_rule(r"^docker build\.", "ask", "prefix rule", use_global=False, cwd=str(tmp_path))
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "prefix search" in out
+    assert "substring search anywhere" not in out
 
 
 def test_log_view_skips_malformed_lines_but_shows_the_rest(tmp_path, monkeypatch, capsys):
