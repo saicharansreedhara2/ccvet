@@ -119,15 +119,15 @@ def test_process_substitution_with_only_safe_commands_is_not_falsely_flagged():
 # credentials` or `echo ... >> ~/.bashrc` had no sensitive path visible
 # to classification anywhere.
 def test_output_redirect_target_is_extracted():
-    assert shell.extract_redirect_targets("echo hi >> ~/.bashrc") == [("~/.bashrc", False)]
+    assert shell.extract_redirect_targets("echo hi >> ~/.bashrc") == [("~/.bashrc", "none")]
 
 
 def test_input_redirect_target_is_extracted():
-    assert shell.extract_redirect_targets("cat < ~/.ssh/id_rsa") == [("~/.ssh/id_rsa", False)]
+    assert shell.extract_redirect_targets("cat < ~/.ssh/id_rsa") == [("~/.ssh/id_rsa", "none")]
 
 
 def test_here_string_redirect_target_is_extracted():
-    assert shell.extract_redirect_targets("cmd <<< somefile") == [("somefile", False)]
+    assert shell.extract_redirect_targets("cmd <<< somefile") == [("somefile", "none")]
 
 
 def test_extract_redirect_targets_returns_none_for_unparseable_input():
@@ -153,19 +153,28 @@ def test_redirect_inside_command_substitution_is_still_found():
 # classified as a plain allow with no awareness the destination was
 # unverifiable.
 def test_substitution_in_redirect_target_is_flagged_dynamic():
+    # $(echo ~/.bashrc) is a *pure* substitution (nothing concatenated
+    # around it), so like $(mktemp) it's "ask", not "deny" - see
+    # test_pure_substitution_redirect_target_is_ask_not_deny. This test
+    # only pins that it's recursed into and flagged at all (not "none"),
+    # not which of ask/deny it lands on.
     targets = shell.extract_redirect_targets("cat myfile > $(echo ~/.bashrc)")
-    assert any(is_dynamic for _target, is_dynamic in targets)
+    assert all(severity != "none" for _target, severity in targets)
 
 
 def test_plain_tilde_redirect_target_is_not_flagged_dynamic():
     targets = shell.extract_redirect_targets("cat myfile > ~/.bashrc")
-    assert all(not is_dynamic for _target, is_dynamic in targets)
+    assert all(severity == "none" for _target, severity in targets)
 
 
-def test_pure_substitution_redirect_target_is_still_flagged_dynamic():
-    # Unlike an argv data source, even a "pure" substitution target
-    # (nothing concatenated) is unverifiable, since the destination path
-    # is whatever the inner command prints - there's no independent
-    # verification story the way there is for a data source.
+def test_pure_substitution_redirect_target_is_ask_not_deny():
+    # A pure substitution (nothing concatenated) is still unverifiable -
+    # the destination path is whatever the inner command prints, and
+    # there's no independent verification story the way there is for a
+    # data source - but it's a common enough idiom (`$(mktemp)`) to
+    # escalate to an overridable ask rather than a hard, non-overridable
+    # deny. Anything concatenated around a substitution, or a bare
+    # variable expansion, stays "deny": see
+    # test_substitution_in_redirect_target_is_flagged_dynamic.
     targets = shell.extract_redirect_targets("cat myfile > $(mktemp)")
-    assert any(is_dynamic for _target, is_dynamic in targets)
+    assert targets == [("$(mktemp)", "ask")]

@@ -24,7 +24,7 @@ def evaluate(tool_name: str, tool_input: dict, cwd: str) -> Verdict:
 
     resolved = paths.resolve(raw_path, cwd)
 
-    if paths.matches_any(resolved, paths.SECRET_PATTERNS):
+    if paths.matches_any(resolved, paths.SECRET_PATTERNS) or paths.is_dangerous_env_path(resolved):
         return Verdict.deny(f"{tool_name} touches a credential path ({resolved})")
 
     if tool_name in READ_ONLY_TOOLS:

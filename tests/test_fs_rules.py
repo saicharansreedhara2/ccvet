@@ -46,6 +46,62 @@ def test_read_env_style_credential_files_is_denied(tmp_path, filename):
     assert verdict.decision == "deny"
 
 
+@pytest.mark.parametrize(
+    "filename",
+    [".env.local", ".env.production", ".env.development", ".env.staging"],
+)
+def test_read_env_variant_credential_files_is_denied(tmp_path, filename):
+    # Found by external review (third round): component-exact matching on
+    # a plain ".env" pattern caught only the literal ".env", so
+    # .env.local/.env.production (the conventional, real-secret-bearing
+    # variants, e.g. Next.js's env file loading order) read straight
+    # through as allow.
+    verdict = evaluate("Read", {"file_path": str(tmp_path / filename)}, str(tmp_path))
+    assert verdict.decision == "deny"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [".env.example", ".env.sample", ".env.template", ".env.dist", ".env.defaults"],
+)
+def test_read_env_safe_variant_is_not_falsely_flagged_as_credential(tmp_path, filename):
+    # The flip side of the above: .env.example and friends are the
+    # equally conventional, safe, usually-committed documentation
+    # variants and must not be swept up by a prefix-only fix.
+    verdict = evaluate("Read", {"file_path": str(tmp_path / filename)}, str(tmp_path))
+    assert verdict.decision != "deny"
+
+
+@pytest.mark.parametrize(
+    "relpath",
+    [
+        ".claude/settings.json",
+        ".claude/settings.local.json",
+        ".mcp.json",
+        ".claude/commands/evil.md",
+        ".claude/agents/evil.md",
+    ],
+)
+def test_write_to_claude_code_own_config_is_denied(tmp_path, relpath):
+    # Found by external review (third round): these are the files that
+    # define Claude Code's own permissions, hooks, and MCP servers -
+    # rewriting one is exactly the "agent quietly makes itself persistent
+    # / rewrites its own rules" class PERSISTENCE_PATTERNS exists to
+    # catch, and a rewritten settings.json can silently drop ccvet's own
+    # hook in the next session.
+    target = tmp_path / relpath
+    verdict = evaluate("Edit", {"file_path": str(target)}, str(tmp_path))
+    assert verdict.decision == "deny"
+
+
+def test_write_to_global_claude_settings_is_denied(tmp_path, monkeypatch):
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    verdict = evaluate("Edit", {"file_path": "~/.claude/settings.json"}, str(tmp_path))
+    assert verdict.decision == "deny"
+
+
 def test_read_credential_path_is_denied(tmp_path):
     ssh_dir = tmp_path / ".ssh"
     ssh_dir.mkdir()

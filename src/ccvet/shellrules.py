@@ -19,6 +19,10 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
     if not commands:
         return Verdict.allow("empty command")
 
+    # pipeline_risk and sql_guard never produce an overridable verdict
+    # (always a hard, unconditional deny), so returning early here rather
+    # than folding them into the candidate list below is a safe, cheap
+    # shortcut, not a shortcut around the override pipeline.
     pipeline_verdict = shell.pipeline_risk(commands)
     if pipeline_verdict is not None:
         return pipeline_verdict
@@ -28,20 +32,34 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
         return sql_verdict
 
     all_argvs = [argv for argv, _dynamic_name, _has_dynamic_arg in commands]
+
+    # secret_path_guard and redirect_target_guard CAN each produce an
+    # overridable verdict (the generic token/secret/credential-name
+    # heuristic; a $(mktemp)-style redirect target). Early-returning
+    # straight from either one, like this function used to, meant that
+    # overridable=True was silently inert: the override-check block
+    # below was only ever reached via the classify_argv path, so a
+    # `ccvet allow` for a generic-secret-name match genuinely never
+    # took effect, with no test ever having caught it. Every candidate
+    # now goes through the same most_severe() + override pipeline,
+    # regardless of which guard produced it.
+    candidates = []
+
     secret_verdict = rules.secret_path_guard(all_argvs)
     if secret_verdict is not None:
-        return secret_verdict
+        candidates.append(secret_verdict)
 
     redirect_targets = shell.extract_redirect_targets(command) or []
     redirect_verdict = rules.redirect_target_guard(redirect_targets)
     if redirect_verdict is not None:
-        return redirect_verdict
+        candidates.append(redirect_verdict)
 
-    verdicts = [
+    candidates.extend(
         rules.classify_argv(argv, has_dynamic_arg=has_dynamic_arg)
         for argv, _dynamic_name, has_dynamic_arg in commands
-    ]
-    verdict = most_severe(verdicts)
+    )
+
+    verdict = most_severe(candidates)
 
     if verdict.overridable:
         override = userpolicy.find_override(command, cwd)

@@ -112,19 +112,35 @@ def extract_simple_commands(command: str):
     return out
 
 
-def _word_has_any_dynamic_content(word) -> bool:
-    """Stricter than _has_untrusted_dynamic_content: used for redirect
-    targets, where even a *pure* substitution (no concatenation) is
-    unverifiable. For an argv data source, classifying the inner command
-    tells us what we're reading (`<(ls -la)` reads exactly `ls -la`'s
-    output). For a redirect *target*, the inner command's output becomes
-    a destination path, and there's no way to know that path without
-    actually running the command - so unlike argv, there's no "pure
-    substitution, independently verified" exception here at all. Tilde is
-    still excluded (predictable, not a substitution or variable).
+def _redirect_target_severity(word) -> str:
+    """Returns "none" (static text, or only a predictable tilde - nothing
+    to flag), "ask" (a *pure*, self-contained command/process
+    substitution with nothing concatenated, e.g. `$(mktemp)` - a common,
+    usually-benign idiom for generating a fresh temp-file path; still
+    unverifiable, so it's escalated rather than trusted, but a
+    user-reviewed `ccvet allow` can promote it), or "deny" (a parameter
+    expansion, or literal text concatenated around a substitution - the
+    more clearly obfuscation-shaped case, like `$(ls -d ~/.ssh)/id_rsa`'s
+    sibling for redirect targets, with no override available).
+
+    Unlike an argv data source, where classifying the inner command of a
+    pure substitution tells us exactly what's being read (`<(ls -la)`
+    reads exactly `ls -la`'s output), a redirect *target*'s inner command
+    output becomes a *destination* path, which there's no way to verify
+    without actually running the command - so even "ask" here is a
+    concession to a known-common idiom, not a claim that it's been
+    verified safe the way a pure argv substitution is treated.
     """
     parts = getattr(word, "parts", None) or []
-    return any(getattr(p, "kind", None) in _UNTRUSTED_PART_KINDS for p in parts)
+    risky_parts = [p for p in parts if getattr(p, "kind", None) in _UNTRUSTED_PART_KINDS]
+    if not risky_parts:
+        return "none"
+    if len(parts) == 1 and len(risky_parts) == 1:
+        only = risky_parts[0]
+        if only.kind in ("commandsubstitution", "processsubstitution"):
+            if getattr(only, "pos", None) == getattr(word, "pos", None):
+                return "ask"
+    return "deny"
 
 
 def _collect_redirect_targets(node, out):
@@ -148,18 +164,17 @@ def _collect_redirect_targets(node, out):
                 # `cat myfile > $(echo ~/.bashrc)` classified as a plain
                 # allow with zero awareness the destination was
                 # unverifiable.
-                is_dynamic = _word_has_any_dynamic_content(target)
-                out.append((target.word, is_dynamic))
+                out.append((target.word, _redirect_target_severity(target)))
     for part in _children(node):
         _collect_redirect_targets(part, out)
 
 
 def extract_redirect_targets(command: str):
-    """Returns a flat list of (target_text, is_dynamic) for every
+    """Returns a flat list of (target_text, severity) for every
     redirection target (the right-hand side of `>`, `>>`, `<`, `<<<`,
     ...) found anywhere in the parse tree, or None if the text can't be
-    parsed. `is_dynamic` means the target contains a substitution or
-    variable expansion whose resolved value can't be known statically.
+    parsed. `severity` is "none"/"ask"/"deny" - see
+    _redirect_target_severity for what each means.
 
     Separate from extract_simple_commands() because redirect targets
     aren't arguments to classify per-program; they matter only for the

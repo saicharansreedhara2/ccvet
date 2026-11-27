@@ -17,11 +17,13 @@ GIT_ASK_SUBCOMMANDS = set(_POLICY["git"]["ask_subcommands"])
 SPECIFIC_SECRET_PATH_PATTERNS = (
     ".ssh/id_", ".ssh/authorized_keys", ".aws/credentials", ".aws/config",
     ".config/gcloud", "/etc/passwd", "/etc/shadow",
-    # .env is arguably the single most common place real secrets live in
-    # an actual project; .netrc/.npmrc/.pypirc/.envrc all routinely carry
-    # auth tokens too. All missing here before, despite being more common
-    # in practice than most of the entries above.
-    ".env", ".netrc", ".npmrc", ".pypirc", ".envrc",
+    # .netrc/.npmrc/.pypirc/.envrc all routinely carry auth tokens too.
+    # .env is handled separately (paths.is_dangerous_env_path_text), not
+    # listed here, since it needs to catch .env.local/.env.production
+    # (real secrets, by convention) while not catching .env.example/
+    # .env.sample (equally conventional, safe documentation variants) -
+    # a plain pattern can't make that distinction.
+    ".netrc", ".npmrc", ".pypirc", ".envrc",
 )
 GENERIC_SECRET_NAME_PATTERNS = ("token", "secret", "credential")
 NETWORK_PROGRAMS = {"curl", "wget", "nc", "netcat", "ssh", "scp", "rsync", "ftp"}
@@ -63,6 +65,8 @@ def _any_secret_arg(all_argvs, specific: bool) -> bool:
         for argv in all_argvs:
             for arg in argv[1:]:
                 if paths.path_text_matches_any(arg, SPECIFIC_SECRET_PATH_PATTERNS):
+                    return True
+                if paths.is_dangerous_env_path_text(arg):
                     return True
         return False
     for argv in all_argvs:
@@ -107,25 +111,35 @@ def redirect_target_guard(redirect_targets):
     (a persistence write) were both classified with no awareness of the
     sensitive path at all.
 
-    `is_dynamic` catches a second bypass of the same shape: a redirect
-    target containing a substitution (`cat myfile > $(echo ~/.bashrc)`)
-    extracts to the raw, unexpanded text, which doesn't match any literal
-    pattern, and there's no inner-command classification that can tell
-    us what a *destination* path resolves to the way there is for a data
-    *source* (contrast with `<(ls -la)` in classify_argv). Denied
-    outright, not just asked, matching the severity of every other check
-    in this function and the "can't verify the command name -> deny"
-    precedent in shell.pipeline_risk.
+    A dynamic target (one containing a substitution or variable
+    expansion) catches a second bypass of the same shape: `cat myfile >
+    $(echo ~/.bashrc)` extracts to the raw, unexpanded text, which
+    doesn't match any literal pattern, and there's no inner-command
+    classification that can tell us what a *destination* path resolves to
+    the way there is for a data *source* (contrast with `<(ls -la)` in
+    classify_argv). A "pure" substitution with nothing concatenated
+    (`$(mktemp)`) is a common, usually-benign idiom, so it's asked rather
+    than denied outright, and marked overridable; anything else dynamic
+    (a bare variable, or literal text glued around a substitution) is
+    denied outright with no override, matching the "can't verify the
+    command name -> deny" precedent in shell.pipeline_risk.
     """
     from .verdict import Verdict
 
-    for target, is_dynamic in redirect_targets:
-        if is_dynamic:
+    for target, severity in redirect_targets:
+        if severity == "deny":
             return Verdict.deny(
                 f"command redirects to/from a dynamically constructed target ({target}), "
                 "cannot verify it doesn't resolve to a sensitive path"
             )
-        if paths.path_text_matches_any(target, paths.SECRET_PATTERNS):
+        if severity == "ask":
+            return Verdict.ask(
+                f"command redirects to/from a dynamically constructed target ({target}), "
+                "e.g. a $(mktemp)-style idiom; cannot verify it doesn't resolve to a sensitive "
+                "path, but this is common enough to let you review and allow it",
+                overridable=True,
+            )
+        if paths.path_text_matches_any(target, paths.SECRET_PATTERNS) or paths.is_dangerous_env_path_text(target):
             return Verdict.deny(f"command redirects to/from a credential file path ({target})")
         if paths.path_text_matches_any(target, paths.PERSISTENCE_PATTERNS):
             return Verdict.deny(f"command redirects to a persistence vector ({target})")

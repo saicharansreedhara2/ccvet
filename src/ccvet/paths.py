@@ -22,21 +22,59 @@ from pathlib import Path
 PERSISTENCE_PATTERNS = (
     ".git/hooks", ".bashrc", ".zshrc", ".profile", ".bash_profile",
     "crontab", "crontabs", "library/launchagents", ".config/systemd/user",
+    # Claude Code's own config: the files that define its permissions,
+    # hooks, and MCP servers. Found by external review: `cat evil >
+    # .claude/settings.json` (or the global `~/.claude/settings.json`,
+    # or `.mcp.json`) classified as a plain allow, since none of these
+    # were in this list at all. This is exactly the "agent quietly makes
+    # itself persistent / rewrites its own rules" class the rest of this
+    # list exists to stop, and a rewritten settings file can silently
+    # drop ccvet's own hook in the next session. The asymmetry was
+    # telling: the Edit tool path for the identical file already asked
+    # (project-local) or denied (outside the project root via the
+    # root-boundary check) - only the Bash/redirect path was missing it.
+    ".claude/settings.json", ".claude/settings.local.json", ".mcp.json",
+    ".claude/commands", ".claude/agents",
 )
+
+# .env is arguably the single most common place real secrets live in an
+# actual project, but it needs smarter handling than a plain pattern:
+# .env.local/.env.production/.env.development (the conventional
+# real-secret-bearing variants, e.g. Next.js's env file loading order)
+# must be caught, while .env.example/.env.sample/.env.template (the
+# equally conventional, safe, usually-committed documentation variants)
+# must not be. See is_dangerous_env_filename below. .netrc/.npmrc/
+# .pypirc/.envrc all routinely carry auth tokens too and don't have this
+# safe-variant ambiguity, so they stay plain exact-match entries.
+_ENV_SAFE_SUFFIXES = (".example", ".sample", ".template", ".dist", ".defaults")
+
+
+def is_dangerous_env_filename(name: str) -> bool:
+    name = name.lower()
+    if not (name == ".env" or name.startswith(".env.")):
+        return False
+    return not any(name.endswith(suffix) for suffix in _ENV_SAFE_SUFFIXES)
+
+
+def is_dangerous_env_path(path: Path) -> bool:
+    return is_dangerous_env_filename(path.name)
+
+
+def is_dangerous_env_path_text(path_str: str) -> bool:
+    basename = path_str.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return is_dangerous_env_filename(basename)
+
 
 SECRET_PATTERNS = (
     ".ssh/id_", ".ssh/authorized_keys", ".aws/credentials", ".aws/config",
     ".config/gcloud", "etc/passwd", "etc/shadow",
-    # .env is arguably the single most common place real secrets live in
-    # an actual project; .netrc/.npmrc/.pypirc/.envrc all routinely carry
-    # auth tokens too. Matching rules.py's SPECIFIC_SECRET_PATH_PATTERNS,
-    # which covers the same files for Bash commands. Note this means a
-    # Write to .npmrc is now a hard deny too, not just the "ask, it's a
+    # Write to .npmrc is a hard deny too, not just the "ask, it's a
     # manifest file" treatment below - consistent with every other
     # exact-path secret match being unconditional regardless of read vs
     # write, and the more defensible default for something that often
-    # carries a registry auth token.
-    ".env", ".netrc", ".npmrc", ".pypirc", ".envrc",
+    # carries a registry auth token. .env is handled separately above
+    # (is_dangerous_env_filename), not listed here.
+    ".netrc", ".npmrc", ".pypirc", ".envrc",
 )
 
 MANIFEST_PATTERNS = (
