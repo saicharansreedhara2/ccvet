@@ -225,6 +225,17 @@ A broader testing pass: a 29-case adversarial corpus (all landed on deny/ask, ze
 
 22 new regression tests (380 total, up from 358) across `test_bash_rules.py`, `test_fs_rules.py`, and `test_commands.py`, 99% coverage maintained (100% on every touched module). Two items confirmed as correctly-understood non-issues, not fixed: a null `tool_input` on a `Bash` call degrading to an allowed empty command, and `Read` allowing any path outside the project root or matching a persistence pattern (reading has no side effect, unlike writing) - both exactly as designed.
 
+**Released as v0.0.9 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live `ccvet allow "ls"` smoke test confirming the `^ls$` anchoring on the real built wheel, then tagged and pushed.
+
+## Round-two verification of v0.0.9 (2026-11-27): one caveat, one documentation gap
+
+An independent re-check (checksum-verified against the actual PyPI upload, not just a local build) confirmed all five findings from the prior round fixed, with no new bypass opened by any of them. Two follow-ups:
+
+- **The `^...$` anchoring fix is not retroactive.** Confirmed directly: seeded a project `policy.yaml` with an unanchored `match: ls` rule (as a pre-0.0.9 ccvet, or a hand-edit, or a direct `userpolicy.add_rule()` call would produce) and `lsof -i` still came back `allow`. Upgrading ccvet does nothing to a rule already on disk - the anchoring logic lives only in `commands.allow()`, the CLI layer, not in `userpolicy.add_rule()` itself. Considered and rejected auto-migrating rules on upgrade: a stored pattern string carries no record of whether it was written as an exact literal (should be anchored) or a deliberately broad `--regex` pattern (shouldn't be), so silently rewriting it risks narrowing a rule someone wrote on purpose - a worse failure mode than leaving it and telling the user. Fixed with a read-only `ccvet status` warning instead: it now lists any loaded project/global policy rule whose pattern doesn't both start with `^` and end with `$`, with a pointer to re-run `ccvet allow` if it was meant as a literal promotion.
+- **`.gitconfig` being deliberately excluded from the credential-path list needed to live in `SECURITY.md`'s "Known gaps" list, not only in `paths.py`'s own comment.** Correctly identified as a defensible call, not a bug, but a reader shouldn't have to go read the source to find a documented, conscious residual. Added to "Known gaps", alongside a new entry for the anchoring-not-retroactive caveat itself.
+
+2 new regression tests in `test_commands.py` (`test_status_warns_about_unanchored_policy_rules`, `test_status_does_not_warn_about_an_anchored_rule`). 382 tests passing (up from 380), 100% coverage on `commands.py` maintained.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

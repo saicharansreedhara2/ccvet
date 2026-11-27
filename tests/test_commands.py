@@ -65,6 +65,44 @@ def test_status_reports_populated_policy_and_audit_log(tmp_path, monkeypatch, ca
     assert "1 entries" in out
 
 
+def test_status_warns_about_unanchored_policy_rules(tmp_path, monkeypatch, capsys):
+    # Found by external review: the ^...$ anchoring fix in
+    # commands.allow() only applies going forward. A rule already
+    # sitting in policy.yaml from before v0.0.9 (or written directly via
+    # userpolicy.add_rule, bypassing the CLI's anchoring) stays exactly
+    # as unanchored, and silently over-broad, as it always was -
+    # upgrading ccvet does nothing to it. `ccvet status` now surfaces
+    # this read-only, since auto-migrating risks narrowing a rule
+    # someone wrote on purpose with --regex.
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    userpolicy.add_rule("ls", "allow", "written by ccvet 0.0.8", use_global=False, cwd=str(tmp_path))
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "1 rule(s)" in out
+    assert "don't anchor" in out
+    assert "'ls'" in out
+
+
+def test_status_does_not_warn_about_an_anchored_rule(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(init, "settings_path", lambda use_global: tmp_path / ("g.json" if use_global else "p.json"))
+    monkeypatch.setattr(userpolicy, "GLOBAL_PATH", tmp_path / "global_policy.yaml")
+    monkeypatch.setattr(audit, "LOG_PATH", tmp_path / "audit.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    userpolicy.add_rule(r"^docker\ build\ \.$", "allow", "reviewed", use_global=False, cwd=str(tmp_path))
+
+    rc = commands.status(_ns())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "don't anchor" not in out
+
+
 def test_log_view_skips_malformed_lines_but_shows_the_rest(tmp_path, monkeypatch, capsys):
     log_path = tmp_path / "audit.jsonl"
     monkeypatch.setattr(audit, "LOG_PATH", log_path)

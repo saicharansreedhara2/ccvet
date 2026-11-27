@@ -57,12 +57,41 @@ def status(args) -> int:
         )
         print(f"{label} hook ({path}): {'wired' if wired else 'not wired'}")
 
+    unanchored_rules = []
     for label, path in (("project", userpolicy.project_path(cwd)), ("global", userpolicy.GLOBAL_PATH)):
         rules = userpolicy._load_file(path)
         if path.exists():
             print(f"{label} policy ({path}): {len(rules)} rule(s)")
         else:
             print(f"{label} policy ({path}): not present")
+        for rule in rules:
+            match = rule.get("match") or ""
+            if match and not (match.startswith("^") and match.endswith("$")):
+                unanchored_rules.append((label, match))
+
+    if unanchored_rules:
+        # Found by external review: the ^...$ anchoring fix in
+        # commands.allow() only applies to a rule written from this
+        # point forward. A rule already sitting in policy.yaml - written
+        # by a pre-0.0.9 ccvet, by hand, or by --regex deliberately -
+        # stays exactly as unanchored as it always was; upgrading ccvet
+        # does nothing to it. Can't safely auto-migrate: a stored
+        # pattern string carries no record of whether it was meant as an
+        # exact literal or a deliberately broad --regex, so silently
+        # rewriting it risks narrowing a rule someone wrote on purpose.
+        # Surfacing it here, read-only, lets the user decide.
+        print(
+            f"\nNote: {len(unanchored_rules)} policy rule(s) don't anchor to the "
+            "whole command (no leading ^ and trailing $), so they match as a "
+            "substring search anywhere in the command text:"
+        )
+        for label, match in unanchored_rules:
+            print(f"  [{label}] {match!r}")
+        print(
+            "If any of these were meant to allow one exact command rather than "
+            "a deliberately broad pattern, re-run `ccvet allow` on it - as of "
+            "v0.0.9 a literal (non-regex) pattern is anchored automatically."
+        )
 
     base_url = config.get("classifier.base_url")
     print(f"Layer 2 classifier: {'configured (' + base_url + ')' if base_url else 'disabled (no classifier.base_url configured)'}")
