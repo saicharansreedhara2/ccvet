@@ -10,6 +10,17 @@ entry carries `cwd` so project context isn't lost.
 Concurrency: multiple Claude Code sessions (even across different
 projects) may invoke `ccvet gate` at the same time, all appending to this
 one file, so every write takes an exclusive flock around the append.
+
+Secrets: a Bash command's full text is stored (unlike Write/Edit content,
+which is hashed, not stored) since "what command actually ran" is the
+whole point of this log for a human reviewing it later. Found by external
+review: a live bearer token on a curl -H flag landed verbatim. redact.py's
+best-effort patterns (Authorization headers, URL-embedded credentials,
+well-known provider token prefixes, inline VARNAME=value secret
+assignments) are applied to the command text and to a WebFetch URL (the
+other field that can carry embedded credentials) before either is
+written. This is a mitigation for the common, structurally-recognizable
+shapes, not a guarantee every secret is caught — see SECURITY.md.
 """
 
 import fcntl
@@ -18,12 +29,14 @@ import json
 import time
 from pathlib import Path
 
+from . import redact
+
 LOG_PATH = Path.home() / ".ccvet" / "audit.jsonl"
 
 
 def _summarize_input(tool_name: str, tool_input: dict) -> dict:
     if tool_name == "Bash":
-        return {"command": tool_input.get("command", "")}
+        return {"command": redact.redact(tool_input.get("command", ""))}
 
     if tool_name in {"Edit", "Write", "NotebookEdit"}:
         path = tool_input.get("file_path") or tool_input.get("notebook_path")
@@ -37,7 +50,7 @@ def _summarize_input(tool_name: str, tool_input: dict) -> dict:
         return {"path": tool_input.get("file_path") or tool_input.get("path") or tool_input.get("pattern")}
 
     if tool_name == "WebFetch":
-        return {"url": tool_input.get("url")}
+        return {"url": redact.redact(tool_input.get("url"))}
 
     return {"input_keys": sorted(tool_input.keys())}
 

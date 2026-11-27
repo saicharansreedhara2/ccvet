@@ -264,6 +264,20 @@ A checksum-verified re-check of v0.1.0 found that the `isinstance(rule, dict)` g
 
 This is a pure bug fix (the fixed behavior is "stop raising/crashing on a malformed rule", not a change to any classification decision), so per the versioning correction above it's a **patch** release, not minor.
 
+**Released as v0.1.1 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live reproduction of the degradation bug on the real built wheel (`ccvet gate` with a seeded `match: 5` rule, confirmed `ls -la` allows correctly), then tagged and pushed.
+
+## Audit-log secret redaction (2026-11-27): closing the one item left open across four review rounds
+
+The plaintext-audit-log finding had been raised four times (first in the "Adversarial and robustness testing round" above, confirmed real with an actual bearer token write) with the same conclusion each time: documented tradeoff, not a bug, no code change. Decided it was worth actually closing after the fourth flag rather than deferring again - user explicitly asked to "solve 1 clearly and reliably."
+
+Design choice made up front: don't hash the whole command the way Write/Edit content already is. The audit log's entire stated purpose (`audit.py`'s own docstring) is "what command actually ran" for a human reviewing it later; hashing that away would defeat the log's purpose, not protect it. The right scope is targeted redaction of secret-*shaped* substrings within the command text, the same class of technique git-secrets/gitleaks/truffleHog use, not a blanket content hash.
+
+Added `src/ccvet/redact.py`: pattern-based, applied to a Bash command's text and a `WebFetch` URL (the other raw-text field that can carry embedded credentials) before either is written. Patterns: `Authorization: Bearer`/`Basic` headers, URL-embedded credentials (`https://user:pass@host`), well-known provider token prefixes (OpenAI `sk-`, GitHub `gh[pousr]_`, AWS `AKIA`, Google `AIza`, Slack `xox[baprs]-`, JWTs), and an inline `VARNAME=value` assignment where the name ends in `TOKEN`/`SECRET`/`KEY`/`PASSWORD`/`PASS`/`CREDENTIAL`(S), case-insensitive. The last pattern is deliberately over-inclusive (`MONKEY=banana` also gets redacted, since it ends in `KEY`) - documented explicitly as the right asymmetry for a security log, favoring a little lost detail over a missed real secret.
+
+Explicitly scoped and documented as best-effort, not exhaustive, in `SECURITY.md`'s "Known gaps": a bare, unlabeled secret with no recognizable structural shape at all won't be caught, and the audit log should still be treated as potentially sensitive.
+
+10 new regression tests (`test_redact.py` plus `test_audit.py` wiring tests), 406 tests passing (up from 395), 100% coverage on `redact.py`. Re-verified end to end through the real hook path with the exact originally-reported reproduction (a live-shaped bearer token on a `curl -H` flag): the token no longer appears anywhere in the written log entry.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

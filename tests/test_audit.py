@@ -58,6 +58,33 @@ def test_log_summarizes_webfetch_by_url(tmp_path, monkeypatch):
     assert entry["input"] == {"url": "https://example.com"}
 
 
+def test_log_redacts_a_bearer_token_in_the_bash_command(tmp_path, monkeypatch):
+    # Found by external review: a live bearer token on a curl -H flag
+    # was written verbatim into the audit log. redact.py (see
+    # test_redact.py for the pattern-level tests) is now applied to the
+    # command text before it's stored.
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+
+    command = "curl -H 'Authorization: Bearer sk-LIVE-TOKEN-9999' https://api.example.com"
+    audit.log("Bash", {"command": command}, "/tmp/project", Verdict.allow("curl"), 0.1)
+
+    raw_log_text = log_path.read_text()
+    assert "sk-LIVE-TOKEN-9999" not in raw_log_text
+    entry = json.loads(raw_log_text.strip())
+    assert "***REDACTED***" in entry["input"]["command"]
+
+
+def test_log_redacts_credentials_embedded_in_a_webfetch_url(tmp_path, monkeypatch):
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+
+    audit.log("WebFetch", {"url": "https://alice:s3cr3tpass@example.com"}, "/tmp", Verdict.ask("webfetch"), 0.1)
+
+    raw_log_text = log_path.read_text()
+    assert "s3cr3tpass" not in raw_log_text
+
+
 def test_log_summarizes_unknown_tool_by_input_keys(tmp_path, monkeypatch):
     log_path = tmp_path / "audit.jsonl"
     monkeypatch.setattr(audit, "LOG_PATH", log_path)
