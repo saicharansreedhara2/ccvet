@@ -38,6 +38,8 @@ Four layers, evaluated in order:
 
 Full detail, including the exact command-by-command classification table, is in [`Docs/risk-taxonomy.md`](Docs/risk-taxonomy.md).
 
+**A note on non-interactive sessions.** "Ask" means exactly that: it escalates for a human to answer. In an interactive session that's the point, it's the review step ccvet exists to add. In a headless session (`claude -p`, a background agent, a CI pipeline) there's no human to answer, so an "ask" is effectively a hard stop, and most non-read-only commands land there by default. If you're running ccvet somewhere headless, build project `ccvet allow` rules ahead of time for the specific commands that pipeline actually runs, or wire ccvet's hook in for interactive sessions only.
+
 ## Install
 
 ```

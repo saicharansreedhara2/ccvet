@@ -59,7 +59,17 @@ def _basename(path: str) -> str:
     return path.rsplit("/", 1)[-1] if path else path
 
 
-def _any_secret_arg(all_argvs, specific: bool) -> bool:
+def _find_secret_arg(all_argvs, specific: bool):
+    """Returns the specific matching argument, or None - not just a
+    bool. Found by external review: secret_path_guard's deny reason
+    named the general category ("~/.ssh, ~/.aws, /etc/passwd, etc.")
+    but never which one actually matched (`cat .env` and `cat
+    ~/.ssh/id_rsa` produced the identical generic message), costing a
+    few seconds of "which rule was that" on every hit. Every other
+    guard in this file that can name the specific thing it matched
+    already does (redirect_target_guard's message includes the actual
+    target, for instance); this one was the exception.
+    """
     if specific:
         # Component-aware, like paths.py's matcher for Edit/Write/
         # redirect targets - a raw substring check here meant ".env"
@@ -69,16 +79,16 @@ def _any_secret_arg(all_argvs, specific: bool) -> bool:
         for argv in all_argvs:
             for arg in argv[1:]:
                 if paths.path_text_matches_any(arg, SPECIFIC_SECRET_PATH_PATTERNS):
-                    return True
+                    return arg
                 if paths.is_dangerous_env_path_text(arg):
-                    return True
-        return False
+                    return arg
+        return None
     for argv in all_argvs:
         for arg in argv[1:]:
             low = arg.lower()
             if any(p in low for p in GENERIC_SECRET_NAME_PATTERNS):
-                return True
-    return False
+                return arg
+    return None
 
 
 def _any_network_program(all_argvs) -> bool:
@@ -97,11 +107,13 @@ def secret_path_guard(all_argvs):
     """
     from .verdict import Verdict
 
-    if _any_secret_arg(all_argvs, specific=True):
-        return Verdict.deny("command references a credential file path (~/.ssh, ~/.aws, /etc/passwd, etc.)")
-    if _any_secret_arg(all_argvs, specific=False) and _any_network_program(all_argvs):
+    specific_hit = _find_secret_arg(all_argvs, specific=True)
+    if specific_hit is not None:
+        return Verdict.deny(f"command references a credential file path ({specific_hit})")
+    generic_hit = _find_secret_arg(all_argvs, specific=False)
+    if generic_hit is not None and _any_network_program(all_argvs):
         return Verdict.deny(
-            "command references something named token/secret/credential alongside a network call",
+            f"command references something named token/secret/credential ({generic_hit}) alongside a network call",
             overridable=True,
         )
     return None
