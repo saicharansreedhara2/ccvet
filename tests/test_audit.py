@@ -85,6 +85,29 @@ def test_log_redacts_credentials_embedded_in_a_webfetch_url(tmp_path, monkeypatc
     assert "s3cr3tpass" not in raw_log_text
 
 
+def test_log_redacts_the_reason_field_too(tmp_path, monkeypatch):
+    # Found by external review, the sharpest gap in the original fix:
+    # redact.redact() was applied to the command/url input fields but
+    # not to verdict.reason - even though rules.py's ASK_PROGRAMS path
+    # builds the reason string by interpolating the same raw argv text
+    # straight back in (f"{program} {' '.join(args)}"), and
+    # ASK_PROGRAMS includes curl/aws/docker/kubectl/gcloud, precisely
+    # the tools that carry credentials as CLI arguments. A secret that
+    # `command` correctly redacted could still land verbatim in
+    # `reason` on the very same log line.
+    log_path = tmp_path / "audit.jsonl"
+    monkeypatch.setattr(audit, "LOG_PATH", log_path)
+
+    command = "aws s3 cp s3://bucket/file --access-key-id AKIAIOSFODNN7EXAMPLE"
+    verdict = Verdict.ask(f"ccvet: {command}, escalating for your review")
+    audit.log("Bash", {"command": command}, "/tmp/project", verdict, 0.1)
+
+    raw_log_text = log_path.read_text()
+    assert "AKIAIOSFODNN7EXAMPLE" not in raw_log_text
+    entry = json.loads(raw_log_text.strip())
+    assert "***REDACTED***" in entry["reason"]
+
+
 def test_log_summarizes_unknown_tool_by_input_keys(tmp_path, monkeypatch):
     log_path = tmp_path / "audit.jsonl"
     monkeypatch.setattr(audit, "LOG_PATH", log_path)

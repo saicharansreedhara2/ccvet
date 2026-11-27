@@ -278,6 +278,22 @@ Explicitly scoped and documented as best-effort, not exhaustive, in `SECURITY.md
 
 10 new regression tests (`test_redact.py` plus `test_audit.py` wiring tests), 406 tests passing (up from 395), 100% coverage on `redact.py`. Re-verified end to end through the real hook path with the exact originally-reported reproduction (a live-shaped bearer token on a `curl -H` flag): the token no longer appears anywhere in the written log entry.
 
+**Released as v0.2.0 (2026-11-27)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, including a live reproduction of the original leak on the real built wheel, then tagged and pushed.
+
+## Verification of v0.2.0 (2026-11-27): a field the redaction fix never covered, and three regex gaps
+
+A checksum-verified re-check confirmed every `redact.py` pattern behaves exactly as documented, then found the fix had a real hole: `redact.redact()` was applied to the `command`/`url` input fields but never to `verdict.reason`, which `audit.log()` writes raw. Serious because of how a `reason` string is actually built: `rules.py`'s `ASK_PROGRAMS` path interpolates the same raw argv text straight back in (`f"{program} {' '.join(args)}"`), and `ASK_PROGRAMS` includes `curl`/`aws`/`docker`/`kubectl`/`gcloud` - precisely the tools that carry credentials as CLI arguments. Confirmed with the sharpest case possible: an AWS access key that `command` correctly redacted survived verbatim in `reason` on the very same log line. Fixed with the one-line change suggested: `redact.redact(verdict.reason)` in `audit.log()`.
+
+Three regex gaps in `redact.py` itself, all confirmed before fixing:
+
+- **A bare keyword-only name never matched** (`password=`/`secret=`/`token=`/`key=`, arguably the single most common real-world form) - the name pattern required at least one character before the keyword suffix, so only a *prefixed* name like `API_PASSWORD=` matched. Fixed by making the leading identifier segment optional.
+- **`curl -u`/`--user USER:PASS` basic auth wasn't covered** - the URL pattern only handled credentials embedded in a URL, not the same shape behind a flag instead. Added a dedicated pattern with the same treatment: username visible, password redacted.
+- **A hyphenated, header-style name missed too** (`x-access-token=abc123`) - widened the character class to allow a hyphen, confirmed this introduces no new false positive since the name still has to *end* in a literal keyword (`--max-key-size=100` stays unredacted; "size" isn't one of the keywords).
+
+4 new regression tests covering all four fixes plus the negative cases that must stay untouched (`PASSWORD_FILE=`, `--max-key-size=`, `ssh-keygen --public-key-path=`, `sort -u` with no colon). 413 tests passing (up from 406), 100% coverage on `redact.py` and `audit.py` maintained. Re-verified end to end through the real hook path with a command combining both new patterns at once.
+
+This is a security bug fix (closing a real leak in the just-added redaction), not new classification behavior, so it's a **patch** release per the versioning rule.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

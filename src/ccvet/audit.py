@@ -68,7 +68,17 @@ def log(tool_name: str, tool_input: dict, cwd: str, verdict, latency_ms: float) 
         "cwd": cwd,
         "input": _summarize_input(tool_name, tool_input),
         "decision": verdict.decision,
-        "reason": verdict.reason,
+        # Found by external review, the sharpest gap in the original
+        # redaction fix: redact.redact() was applied to the `command`/
+        # `url` input fields but not here, even though the ASK_PROGRAMS
+        # reason string is built by interpolating the same raw argv
+        # text straight back in (rules.py's `f"{program} {' '.join(
+        # args)}"`). ASK_PROGRAMS includes curl/aws/docker/kubectl/
+        # gcloud - precisely the tools that carry credentials as CLI
+        # arguments - so a secret that `command` correctly redacted
+        # could still land verbatim in `reason` on the very same log
+        # line.
+        "reason": redact.redact(verdict.reason),
         "latency_ms": round(latency_ms, 2),
     }
     _ensure_log_file()

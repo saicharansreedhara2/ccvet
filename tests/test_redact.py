@@ -74,3 +74,56 @@ def test_leaves_an_ordinary_command_untouched():
 def test_handles_empty_and_none_input():
     assert redact.redact("") == ""
     assert redact.redact(None) is None
+
+
+def test_redacts_a_bare_keyword_only_assignment():
+    # Found by external review: the leading identifier segment was
+    # required (one-or-more chars before the keyword), so the single
+    # most common real-world form - a bare "password="/"secret="/
+    # "token="/"key=" with no prefix at all - passed through untouched;
+    # only a prefixed name like API_PASSWORD= was ever matched.
+    for text in ["password=hunter2", "secret=abc123", "token=xyz789", "key=zzz999"]:
+        out = redact.redact(text)
+        assert "***REDACTED***" in out, f"{text!r} was not redacted"
+        assert text.split("=")[1] not in out
+
+
+def test_redacts_a_hyphenated_header_style_name():
+    # Found by external review: a header-style value like
+    # x-access-token=abc123 is a hyphenated name, not a shell-variable
+    # one, and hyphens weren't allowed in the name's character class.
+    text = "x-access-token=abc123"
+    out = redact.redact(text)
+    assert "abc123" not in out
+    assert out == "x-access-token=***REDACTED***"
+
+
+def test_does_not_redact_a_name_that_merely_contains_but_does_not_end_in_a_keyword():
+    # The hyphen-widening and optional-prefix fixes above must not turn
+    # into a bare substring match: the name has to actually *end* in
+    # one of the literal keywords.
+    cases = ["PASSWORD_FILE=/tmp/p", "--max-key-size=100", "ssh-keygen --public-key-path=/tmp/id.pub"]
+    for text in cases:
+        assert redact.redact(text) == text, f"{text!r} was incorrectly redacted"
+
+
+def test_redacts_basic_auth_via_curl_dash_u_flag():
+    # Found by external review: curl -u user:pass is a second shape of
+    # the same "credentials glued to a username by a colon" idea the
+    # URL-embedded-credentials pattern already covers, just not behind
+    # a URL. The username isn't the secret, same as that case - keep it
+    # visible, redact only the password half.
+    out = redact.redact("curl -u alice:hunter2 https://example.com")
+    assert "hunter2" not in out
+    assert out == "curl -u alice:***REDACTED*** https://example.com"
+
+
+def test_redacts_basic_auth_via_curl_dash_dash_user_flag():
+    out = redact.redact("curl --user alice:hunter2 https://example.com")
+    assert "hunter2" not in out
+    assert "alice" in out
+
+
+def test_does_not_falsely_redact_an_ordinary_dash_u_flag_with_no_colon():
+    text = "sort -u file.txt"
+    assert redact.redact(text) == text
