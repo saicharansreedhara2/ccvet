@@ -35,7 +35,7 @@ Source: https://code.claude.com/docs/en/hooks. Captured here because the whole t
 | `allow` | Permit the tool call |
 | `deny` | Block the tool call |
 | `ask` | Escalate to the user |
-| `defer` | Hand back to Claude Code's normal permission flow. **This is ccvet's internal fallback when it has no opinion**, not `ask`, since `ask` and `defer` are different things on the wire even though both end up asking the user in most permission modes. |
+| `defer` | Documented upstream as "passes to the next configured hook or permission system" (re-confirmed by fetching the live docs page on 2026-11-27, past the original 2026-11-23 verification date, since a previous question raised whether this value was real or ccvet's own invention: it's real). **This is ccvet's internal fallback when it has no opinion**, not `ask`, since `ask` and `defer` are different things on the wire even though both end up asking the user in most permission modes. |
 
 A hook can also rewrite the call instead of just approving or denying it: `{"hookSpecificOutput": {"allow": true, "updatedInput": {...}}}`. Not used by ccvet v1, but worth knowing it exists.
 
@@ -68,6 +68,7 @@ Default for `PreToolUse` command/http/mcp_tool hooks: **600 seconds** (the 30s d
   }
 }
 ```
+`command` is shown here as the bare `"ccvet gate"` for readability, but `ccvet init` actually writes the running interpreter's absolute path (e.g. `/path/to/venv/bin/ccvet gate`), not the bare name. Found by external review: Claude Code spawns the hook command in its own shell, which isn't guaranteed to carry the same `PATH` the interactive shell `ccvet init` ran from, a venv install being the common case where it doesn't; a bare name then resolves to nothing, fails open to normal permissions per the timeout behavior below, with no error shown anywhere. See `init._hook_binary()`.
 - `matcher` filters by tool name pattern (`"Bash"`, `"Edit|Write"`, regex, or `"*"` for all). ccvet installs itself with `"*"` since it wants to see every tool call and apply its own internal dispatch (Read/Grep/Glob versus Bash versus Edit/Write versus everything else) rather than relying on the matcher to pre-filter.
 - Multiple matcher groups can coexist for the same event, and **hooks run in parallel when an event fires**. If the user has other `PreToolUse` hooks installed, ours runs alongside them, not before or after. `ccvet init` must merge into the `PreToolUse` array, never replace it.
 - Handler `type` can be `command`, `http`, `mcp_tool`, `prompt`, or `agent`. ccvet uses `command`.
@@ -81,3 +82,5 @@ Default for `PreToolUse` command/http/mcp_tool hooks: **600 seconds** (the 30s d
 
 ## Open question not yet resolved by the docs page
 How Claude Code reconciles multiple hooks' decisions when they run in parallel and disagree (for example, one says `allow`, another says `ask`) isn't stated on this page. Treat as unknown. Don't assume ccvet's `deny` is guaranteed to win over another hook's `allow` until verified against real behavior.
+
+`defer`'s own documented wording ("passes to the next configured hook or permission system") hints that hooks aren't purely independent-and-merged, there's some notion of "the next" one, at least for a `defer` result specifically. That's a hint, not a resolution: it doesn't say what happens when two hooks give actively conflicting allow/deny verdicts rather than one of them deferring. Still treat the conflicting-verdicts case as unknown.

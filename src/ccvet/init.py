@@ -1,25 +1,57 @@
 """Wires ccvet's PreToolUse hook into Claude Code's settings.json.
 
-Spike-quality merge: re-serializes the whole settings file with sorted
-keys, which reformats anything already in there rather than doing a
-surgical patch. Fine for Phase 0.5 proving the plumbing; Phase 2 needs a
-less invasive merge that preserves the rest of the file's formatting.
+Re-serializes the whole settings file rather than doing a surgical,
+format-preserving patch, so anything already in the file gets rewritten
+to this module's own JSON formatting (2-space indent). This is a
+deliberate, permanent tradeoff, not a Phase 0.5 placeholder waiting on a
+later phase: a surgical patcher that preserves an arbitrary existing
+file's whitespace/comments would need a format-preserving JSON library
+(JSON has no comments and no standard for this), for a payoff that only
+matters for `git diff` noise on a file nobody hand-edits often. The
+written JSON is always semantically equivalent to what was there before,
+just reformatted.
 """
 
 import json
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 from . import config
 
-HOOK_COMMAND = "ccvet gate"
+HOOK_SUBCOMMAND = "gate"
 # Generous relative to Layer 0/1 (sub-millisecond), to leave room for an
 # optional Layer 2 LLM call on a slow local model. If a hook invocation
 # does blow through this, PreToolUse fails open to the normal permission
 # flow rather than blocking the tool call (see Docs/hook-contract.md) -
 # the cost of a too-tight timeout here is degraded UX, not a safety gap.
 HOOK_TIMEOUT_SECONDS = 20
+
+
+def _hook_binary() -> str:
+    """Absolute path to the ccvet executable, resolved from the running
+    interpreter rather than a bare "ccvet" name. Found by external
+    review: Claude Code spawns a PreToolUse hook command in its own
+    shell, which is not guaranteed to carry the same PATH as the
+    interactive shell `ccvet init` was run from - a venv install is the
+    common case where it doesn't. The result: a bare "ccvet gate" hook
+    entry resolves fine when typed by hand, but Claude Code's spawned
+    shell reports "command not found", which (per the documented
+    PreToolUse timeout/failure behavior) fails open to the normal
+    permission flow with no error shown anywhere - ccvet silently never
+    runs again, even though `ccvet status` still reports it as wired.
+
+    pip/pipx/hatchling always install a project's console-script shim
+    into the same directory as the venv's own `python`, so resolving
+    against `sys.executable` (never PATH-dependent; it's exactly how the
+    currently-running process was launched) reliably finds it even when
+    PATH wouldn't. Falls back to the bare name only if that sibling file
+    doesn't exist, which should be rare.
+    """
+    candidate = Path(sys.executable).parent / "ccvet"
+    return str(candidate) if candidate.exists() else "ccvet"
+
 
 LOCAL_SERVER_CANDIDATES = [
     ("Ollama", "http://localhost:11434/v1"),
@@ -47,10 +79,21 @@ def _load(path: Path) -> dict:
 
 
 def _is_ccvet_entry(entry: dict) -> bool:
-    return any(
-        hook.get("type") == "command" and hook.get("command", "").strip() == HOOK_COMMAND
-        for hook in entry.get("hooks", [])
-    )
+    # Matches by shape (last token "gate", the token before it a path
+    # whose basename is "ccvet"), not by exact string equality to one
+    # fixed command - the command string now bakes in an install-
+    # specific absolute path (see _hook_binary), which changes across
+    # reinstalls/venvs. Matching by shape means re-running `ccvet init`
+    # after reinstalling elsewhere replaces the old entry in place
+    # instead of leaving a stale, now-wrong absolute path sitting
+    # alongside a second, newly-added one.
+    for hook in entry.get("hooks", []):
+        if hook.get("type") != "command":
+            continue
+        parts = hook.get("command", "").strip().split()
+        if len(parts) == 2 and parts[1] == HOOK_SUBCOMMAND and Path(parts[0]).name == "ccvet":
+            return True
+    return False
 
 
 def merge(settings: dict) -> dict:
@@ -60,7 +103,13 @@ def merge(settings: dict) -> dict:
     pre_tool_use.append(
         {
             "matcher": "*",
-            "hooks": [{"type": "command", "command": HOOK_COMMAND, "timeout": HOOK_TIMEOUT_SECONDS}],
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f"{_hook_binary()} {HOOK_SUBCOMMAND}",
+                    "timeout": HOOK_TIMEOUT_SECONDS,
+                }
+            ],
         }
     )
     hooks["PreToolUse"] = pre_tool_use
@@ -133,7 +182,7 @@ def run(use_global: bool = False, assume_yes: bool = False) -> int:
             return 1
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(after, indent=2) + "\n")
+    path.write_text(after_text + "\n")
     print(f"Wired ccvet into {path}")
     offer_layer2_setup(assume_yes=assume_yes)
     return 0
@@ -179,6 +228,6 @@ def uninstall(use_global: bool = False, assume_yes: bool = False) -> int:
             print("Aborted, no changes written.")
             return 1
 
-    path.write_text(json.dumps(after, indent=2) + "\n")
+    path.write_text(after_text + "\n")
     print(f"Removed ccvet from {path}")
     return 0
