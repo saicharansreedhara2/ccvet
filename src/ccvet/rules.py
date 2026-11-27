@@ -117,12 +117,13 @@ def redirect_target_guard(redirect_targets):
     doesn't match any literal pattern, and there's no inner-command
     classification that can tell us what a *destination* path resolves to
     the way there is for a data *source* (contrast with `<(ls -la)` in
-    classify_argv). A "pure" substitution with nothing concatenated
-    (`$(mktemp)`) is a common, usually-benign idiom, so it's asked rather
-    than denied outright, and marked overridable; anything else dynamic
-    (a bare variable, or literal text glued around a substitution) is
-    denied outright with no override, matching the "can't verify the
-    command name -> deny" precedent in shell.pipeline_risk.
+    classify_argv). A target that's *purely* one dynamic token with
+    nothing concatenated around it (`$(mktemp)`, or a bare variable like
+    `$OUT`) is a common, usually-benign shape, so it's asked rather than
+    denied outright, and marked overridable; literal text glued around a
+    dynamic part (`$(ls -d ~/.ssh)/id_rsa`, `${OUT}.bak`) is denied
+    outright with no override, matching the "can't verify the command
+    name -> deny" precedent in shell.pipeline_risk.
     """
     from .verdict import Verdict
 
@@ -135,8 +136,9 @@ def redirect_target_guard(redirect_targets):
         if severity == "ask":
             return Verdict.ask(
                 f"command redirects to/from a dynamically constructed target ({target}), "
-                "e.g. a $(mktemp)-style idiom; cannot verify it doesn't resolve to a sensitive "
-                "path, but this is common enough to let you review and allow it",
+                "e.g. a $(mktemp)-style idiom or a plain variable like $OUT; cannot verify it "
+                "doesn't resolve to a sensitive path, but this is common enough to let you "
+                "review and allow it",
                 overridable=True,
             )
         if paths.path_text_matches_any(target, paths.SECRET_PATTERNS) or paths.is_dangerous_env_path_text(target):

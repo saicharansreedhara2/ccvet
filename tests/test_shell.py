@@ -173,8 +173,27 @@ def test_pure_substitution_redirect_target_is_ask_not_deny():
     # there's no independent verification story the way there is for a
     # data source - but it's a common enough idiom (`$(mktemp)`) to
     # escalate to an overridable ask rather than a hard, non-overridable
-    # deny. Anything concatenated around a substitution, or a bare
-    # variable expansion, stays "deny": see
-    # test_substitution_in_redirect_target_is_flagged_dynamic.
+    # deny. Anything concatenated around it stays "deny": see
+    # test_concatenated_substitution_redirect_target_is_deny below.
     targets = shell.extract_redirect_targets("cat myfile > $(mktemp)")
     assert targets == [("$(mktemp)", "ask")]
+
+
+def test_concatenated_substitution_redirect_target_is_deny():
+    targets = shell.extract_redirect_targets("cat myfile > $(ls -d ~/.ssh)/id_rsa")
+    assert targets == [("$(ls -d ~/.ssh)/id_rsa", "deny")]
+
+
+def test_bare_variable_redirect_target_is_ask_not_deny():
+    # Found by review after v0.0.5: a bare variable is just as common and
+    # just as unverifiable as a pure substitution (`OUT=report.txt; cmd >
+    # $OUT` is an entirely ordinary shell idiom), so it gets the same
+    # "ask" treatment, not the stricter "deny" a first version of this
+    # fix gave it.
+    targets = shell.extract_redirect_targets("cat myfile > $OUT")
+    assert targets == [("$OUT", "ask")]
+
+
+def test_concatenated_variable_redirect_target_is_deny():
+    targets = shell.extract_redirect_targets("cat myfile > ${OUT}.bak")
+    assert targets == [("${OUT}.bak", "deny")]

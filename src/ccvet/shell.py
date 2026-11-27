@@ -114,21 +114,32 @@ def extract_simple_commands(command: str):
 
 def _redirect_target_severity(word) -> str:
     """Returns "none" (static text, or only a predictable tilde - nothing
-    to flag), "ask" (a *pure*, self-contained command/process
-    substitution with nothing concatenated, e.g. `$(mktemp)` - a common,
-    usually-benign idiom for generating a fresh temp-file path; still
-    unverifiable, so it's escalated rather than trusted, but a
-    user-reviewed `ccvet allow` can promote it), or "deny" (a parameter
-    expansion, or literal text concatenated around a substitution - the
-    more clearly obfuscation-shaped case, like `$(ls -d ~/.ssh)/id_rsa`'s
-    sibling for redirect targets, with no override available).
+    to flag), "ask" (the whole target is *purely* one dynamic token with
+    nothing concatenated around it - a self-contained substitution like
+    `$(mktemp)`, or a bare variable like `$OUT` - a common, usually-
+    benign shape for a redirect target; still unverifiable, so it's
+    escalated rather than trusted, but a user-reviewed `ccvet allow` can
+    promote it), or "deny" (literal text concatenated around a dynamic
+    part, e.g. `$(ls -d ~/.ssh)/id_rsa` or `${OUT}.bak` - the more
+    clearly obfuscation-shaped case, with no override available).
+
+    A bare variable gets the same "ask" treatment as a pure substitution,
+    not a stricter one: `OUT=report.txt; cmd > $OUT` is an entirely
+    ordinary shell idiom, and like `$(mktemp)`, the destination still
+    can't be statically verified either way - the risk profile of "one
+    clean, unverifiable token" doesn't depend on whether that token is a
+    substitution or a variable. What makes a target obfuscation-shaped
+    enough to deny outright is specifically literal text glued onto a
+    dynamic part, which bashlex's position spans make detectable: the
+    word's own span is wider than its single dynamic child's span exactly
+    when something is concatenated.
 
     Unlike an argv data source, where classifying the inner command of a
     pure substitution tells us exactly what's being read (`<(ls -la)`
-    reads exactly `ls -la`'s output), a redirect *target*'s inner command
-    output becomes a *destination* path, which there's no way to verify
-    without actually running the command - so even "ask" here is a
-    concession to a known-common idiom, not a claim that it's been
+    reads exactly `ls -la`'s output), a redirect *target*'s dynamic
+    content becomes a *destination* path, which there's no way to verify
+    without actually running/resolving it - so even "ask" here is a
+    concession to a known-common shape, not a claim that it's been
     verified safe the way a pure argv substitution is treated.
     """
     parts = getattr(word, "parts", None) or []
@@ -137,9 +148,8 @@ def _redirect_target_severity(word) -> str:
         return "none"
     if len(parts) == 1 and len(risky_parts) == 1:
         only = risky_parts[0]
-        if only.kind in ("commandsubstitution", "processsubstitution"):
-            if getattr(only, "pos", None) == getattr(word, "pos", None):
-                return "ask"
+        if getattr(only, "pos", None) == getattr(word, "pos", None):
+            return "ask"
     return "deny"
 
 

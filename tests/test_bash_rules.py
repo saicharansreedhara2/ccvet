@@ -62,11 +62,14 @@ ASK_CASES = [
     "git remote prune origin",
     "git tag -d v1.2.0",
     "git tag --delete v1.2.0",
-    # Pure, self-contained redirect-target substitutions ($(mktemp)-style):
-    # unverifiable, but a common enough idiom to escalate rather than
-    # hard-deny. See test_dynamic_redirect_target_cases_are_overridable.
+    # Pure, self-contained redirect-target substitutions ($(mktemp)-style)
+    # and bare variables ($OUT): unverifiable, but a common enough idiom
+    # (an ordinary shell script routinely does `OUT=report.txt; cmd >
+    # $OUT`) to escalate rather than hard-deny. See
+    # test_dynamic_redirect_target_cases_are_overridable.
     "cat myfile > $(echo ~/.bashrc)",
     "cat myfile > $(mktemp)",
+    "cat myfile > $OUT",
 ]
 
 BLOCK_CASES = [
@@ -134,11 +137,11 @@ BLOCK_CASES = [
     "cat evil > .mcp.json",
     "echo evil >> .claude/commands/build.md",
     # Non-pure dynamic redirect targets (literal text concatenated around
-    # a substitution, or a bare variable expansion) stay a hard,
-    # non-overridable deny - only a *pure* substitution like $(mktemp)
+    # a substitution or a variable) stay a hard, non-overridable deny -
+    # only a *pure*, nothing-concatenated token ($(mktemp), $OUT) ever
     # downgrades to an overridable ask (see ASK_CASES above).
     "cat myfile > $(ls -d ~/.ssh)/id_rsa",
-    "cat myfile > $DEST",
+    "cat myfile > ${OUT}.bak",
     # Expanded catastrophic-target coverage (was missing these entirely).
     "rm -rf /var",
     "rm -rf /opt",

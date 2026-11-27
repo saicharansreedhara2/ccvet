@@ -66,8 +66,22 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
         if override is not None:
             return override
 
-        classifier_verdict = classifier.classify(command)
-        if classifier_verdict is not None:
-            return classifier_verdict
+        # Layer 2 is deliberately restricted to the "ask" tier only, even
+        # though a secret_path_guard/redirect_target_guard verdict can
+        # also be an overridable "deny" (e.g. the generic token/secret/
+        # credential-name heuristic). classifier.classify() itself has no
+        # opinion on the input decision - it's purely gated by this
+        # caller - so without this check, fixing the overridable-is-
+        # inert bug above would have silently widened Layer 2's reach: a
+        # one-shot, unreviewed local-model opinion could promote an
+        # overridable *deny* to allow, not just an *ask*, contradicting
+        # classifier.py's own documented contract ("can only turn an ask
+        # into an allow"). A human-reviewed `ccvet allow` policy rule
+        # (just above) is a different trust tier and keeps working on
+        # any overridable verdict, deny included.
+        if verdict.decision == "ask":
+            classifier_verdict = classifier.classify(command)
+            if classifier_verdict is not None:
+                return classifier_verdict
 
     return verdict
