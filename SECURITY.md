@@ -226,6 +226,14 @@ A review of the new rules found "all stated-safe forms stayed safe" to be too st
 
 22 new regression tests across `test_bash_rules.py` and `test_shell.py`. 544 tests passing (up from 522), 100% coverage on `rules.py` and `shell.py` maintained. Re-verified end to end through the real hook path for both the shell-interpreter bypass and the redirect-root-boundary fix.
 
+## A false positive from the redirect-root fix, and adding `echo`
+
+A real session, within hours of the redirect-root-boundary fix above shipping, hit `2> /dev/null` (suppressing stderr, an extremely common and totally inert idiom) and got denied as "outside the project root" - true of the literal path, but `/dev/null` is a special discard device, not a real file with content to overwrite. Fixed with a short, explicit exemption (`SAFE_DISCARD_REDIRECT_TARGETS`: `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`) checked against the raw target text before resolving - deliberately not "skip anything under `/dev`", since a real block device (`/dev/sda1`) redirected to directly is exactly the kind of write this check exists to catch, the same concern `dd ... of=/dev/*` is already denied for elsewhere. Confirmed a path that merely starts with `/dev/null` but resolves somewhere else (`/dev/null/../../etc/hosts`-shaped traversal) isn't swept into the exemption, since the match is exact-string, not prefix.
+
+Also added `echo` to `auto_programs`, deliberately considering how it's actually used before adding it, not just "it looks harmless": `echo` by itself has no file-write capability of its own, and every way it could meaningfully contribute to something dangerous is already caught by a separate, independent check regardless of `echo`'s own classification - confirmed directly for all four shapes before adding it. `echo $(cat ~/.ssh/id_rsa)` still denies, since the *inner* `cat ~/.ssh/id_rsa` is independently extracted and hits the credential-path guard on its own. `echo secret >> ~/.bashrc` still denies, since the redirect target is checked separately. `echo payload | base64 -d | sh` still denies via the decode-then-shell pipeline check. `echo payload | sh` still asks, since a bare `sh`/`bash` with no recognized args independently asks regardless of what feeds it, and a pipeline's overall verdict is always its most severe segment - `echo`'s own classification never gets a chance to widen that.
+
+7 new regression tests. 557 tests passing (up from 544), 100% coverage on `rules.py` maintained. Re-verified end to end through the real hook path.
+
 ## Reporting a vulnerability
 
 If you find a way to make ccvet auto-approve something it clearly should not (a bypass of Layer 0's hard-coded guards in particular), please open an issue describing the command and the expected versus actual decision. If the bypass is severe enough that public disclosure before a fix would be actively harmful, say so in the issue and we'll coordinate privately first.

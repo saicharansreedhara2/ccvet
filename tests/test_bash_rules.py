@@ -447,6 +447,59 @@ def test_input_redirect_outside_the_project_root_is_not_root_checked(tmp_path):
     assert verdict.decision != "deny"
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["ls -la 2>/dev/null", "ls -la > /dev/null", "ls -la >> /dev/null", "cmd 2>/dev/stderr", "cmd > /dev/tty"],
+)
+def test_redirect_to_a_safe_discard_target_is_not_treated_as_outside_the_project_root(tmp_path, command):
+    # Found in real use right after redirect_target_root_guard shipped:
+    # `2>/dev/null` (suppressing stderr, an extremely common, totally
+    # inert idiom) was being denied as "outside the project root" -
+    # true of the literal path, but writing to /dev/null has no effect
+    # at all, by design.
+    verdict = evaluate(command, str(tmp_path))
+    assert verdict.decision != "deny"
+
+
+def test_redirect_to_a_real_device_outside_dev_null_still_denies(tmp_path):
+    # The safe-discard exemption is a short, explicit list of exact
+    # paths, not "skip anything under /dev" - a real block device is
+    # exactly the kind of write this check exists to catch (the same
+    # concern `dd ... of=/dev/*` is denied for elsewhere).
+    verdict = evaluate("cmd > /dev/sda1", str(tmp_path))
+    assert verdict.decision == "deny"
+    assert "outside the project root" in verdict.reason
+
+
+def test_traversal_through_dev_null_does_not_escape_the_exemption(tmp_path):
+    # The exemption matches the raw target text exactly - a path that
+    # merely starts with "/dev/null" but resolves somewhere else
+    # entirely must not be swept into the same exemption.
+    outside = tmp_path.parent / "etc_hosts_via_dev_null_traversal"
+    verdict = evaluate(f"cmd > /dev/null/../../{outside.name}", str(tmp_path))
+    assert verdict.decision == "deny"
+
+
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("echo hi", "allow"),
+        ("echo $(whoami)", "allow"),
+        # Found by external review's own analysis before the addition:
+        # every way "echo" could meaningfully contribute to something
+        # dangerous is already caught by a separate, independent check
+        # regardless of echo's own classification - confirmed directly
+        # for all four shapes before adding "echo" to auto_programs.
+        ("echo $(cat ~/.ssh/id_rsa)", "deny"),
+        ("echo secret >> ~/.bashrc", "deny"),
+        ("echo payload | base64 -d | sh", "deny"),
+        ("echo payload | sh", "ask"),
+    ],
+)
+def test_echo_is_auto_allowed_but_not_a_bypass_for_other_checks(command, expected):
+    assert evaluate(command).decision == expected
+
+
 # Regression tests for a real bypass reported by an external review:
 # `cat $(ls -d ~/.ssh)/id_rsa` fully bypassed to "allow". The secret-path
 # guard's substring check never saw ".ssh/id_" (the closing paren breaks

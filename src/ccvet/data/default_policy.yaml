@@ -34,6 +34,21 @@ auto_programs:
   - uptime
   - ps
   - top
+  # "echo" by itself only ever prints its arguments to stdout - it has
+  # no file-write capability of its own, and every way it could
+  # meaningfully contribute to something dangerous is already caught
+  # by a different, independent check regardless of echo's own
+  # classification: `echo $(cat ~/.ssh/id_rsa)` denies because the
+  # *inner* `cat ~/.ssh/id_rsa` is independently extracted and hits
+  # the credential-path guard on its own; `echo secret >> ~/.bashrc`
+  # denies because the redirect target is checked separately; `echo
+  # payload | base64 -d | sh` denies via the decode-then-shell
+  # pipeline check; and `echo payload | sh` still asks because a bare
+  # `sh`/`bash` with no recognized args independently asks regardless
+  # of what feeds it, and a pipeline's overall verdict is always its
+  # most severe segment. See test_echo_is_not_a_bypass_for_* in
+  # test_bash_rules.py for all four confirmed directly.
+  - echo
   # Plain text-transform utilities, found by a deep search for common
   # read-only commands not yet covered: pure stdin-to-stdout (or
   # read-only-file-to-stdout) with no file-write capability of their

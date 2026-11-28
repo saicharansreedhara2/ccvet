@@ -395,6 +395,16 @@ A review found "all stated-safe forms stayed safe" to be too strong - one confir
 
 22 new regression tests across `test_bash_rules.py` and `test_shell.py`. 544 tests passing (up from 522), 100% coverage on `rules.py` and `shell.py` maintained. Re-verified end to end through the real hook path for both the shell-interpreter bypass and the redirect-root-boundary fix.
 
+**Released as v0.3.1 (2026-11-28)**: bumped `pyproject.toml`, verified the wheel locally in a clean venv before tagging, then tagged and pushed.
+
+## A false positive from the redirect-root fix, and adding `echo` (2026-11-28)
+
+A real session, within hours of v0.3.1's redirect-root-boundary fix shipping, hit `2> /dev/null` and got denied as "outside the project root" - true of the literal path, but `/dev/null` is a special discard device, not a real file with content to overwrite. Fixed with a short, explicit exemption (`SAFE_DISCARD_REDIRECT_TARGETS`: `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty`), matched against the raw target text exactly rather than as a prefix - deliberately not "skip anything under `/dev`", since a real block device (`/dev/sda1`) redirected to directly is exactly the write this check exists to catch, the same concern `dd ... of=/dev/*` is already denied for. Confirmed a path merely starting with `/dev/null` but resolving elsewhere (`/dev/null/../../etc/hosts`-shaped traversal) isn't swept into the exemption.
+
+Also added `echo` to `auto_programs`, asked for explicitly with "carefully considering the way it will be used," not just "it looks harmless." Checked all four ways it could meaningfully contribute to something dangerous before adding it, confirming each is caught by a separate, independent mechanism regardless of `echo`'s own classification: `echo $(cat ~/.ssh/id_rsa)` denies via the independently-extracted inner `cat`; `echo secret >> ~/.bashrc` denies via the redirect-target check; `echo payload | base64 -d | sh` denies via the decode-then-shell pipeline check; `echo payload | sh` still asks, since a bare `sh`/`bash` with no recognized args independently asks regardless of what feeds it, and a pipeline's overall verdict is always its most severe segment.
+
+7 new regression tests. 557 tests passing (up from 544), 100% coverage on `rules.py` maintained. Re-verified end to end through the real hook path.
+
 ## Phase 7: Stretch goals (post-v1, not blocking initial release)
 - [ ] Persistent local daemon mode so the hook script becomes a thin client call instead of a fresh Python process per tool call, cutting per-invocation startup latency
 - [ ] Windows/PowerShell taxonomy coverage (explicitly deferred in v1, see Scope notes in risk-taxonomy.md)

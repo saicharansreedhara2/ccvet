@@ -85,6 +85,14 @@ _BARE_INFO_FLAGS = {"--version", "--help"}
 # unrecognized flag, falls through to the ask fallback instead of
 # being assumed safe.
 GIT_BRANCH_LIST_FLAGS = {"-a", "-r", "-v", "-vv", "--list", "--all", "--remotes", "--show-current", "--color", "--no-color"}
+# Writing to these has no effect at all, by design - not "a file
+# outside the project root" the way an arbitrary /dev/sdX block
+# device would be. "/dev/null" is the one that actually bit a real
+# session: `2>/dev/null` (suppressing stderr, an extremely common,
+# totally inert idiom) was being denied by redirect_target_root_guard
+# as "outside the project root", true of the literal path but not of
+# any real consequence.
+SAFE_DISCARD_REDIRECT_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 PROTECTED_BRANCHES = {"main", "master"}
 # Top-level system directories plus bare wildcards. Originally much
 # narrower (missing /var, /opt, /Applications, /Library, /root, /sbin,
@@ -260,6 +268,22 @@ def redirect_target_root_guard(output_redirect_targets, cwd):
     project_root = Path(os.path.realpath(cwd))
     for target, severity in output_redirect_targets:
         if severity != "none":
+            continue
+        if target in SAFE_DISCARD_REDIRECT_TARGETS:
+            # Found by live use right after this check shipped: `2>
+            # /dev/null` (suppressing stderr, an extremely common,
+            # completely inert idiom) was being denied as "outside the
+            # project root" - true of the path, but `/dev/null` isn't
+            # a real file with real content to overwrite; writing to
+            # it has no effect at all, by design. Checked against the
+            # raw target text, before resolving, since these are
+            # well-known fixed paths, not something that needs
+            # realpath's symlink/relative-path handling to recognize.
+            # Deliberately a short, explicit list, not "skip anything
+            # under /dev" - /dev/sda1 and friends are real block
+            # devices, and a redirect straight to one is exactly the
+            # kind of write this check exists to catch (the same
+            # concern `dd ... of=/dev/*` is denied for elsewhere).
             continue
         resolved = paths.resolve(target, cwd)
         if not paths.is_within(resolved, project_root):
