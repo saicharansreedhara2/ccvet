@@ -241,12 +241,16 @@ def redirect_target_root_guard(output_redirect_targets, cwd):
     redirect to an arbitrary location outside the project silently
     bypassed a protection the Write tool already enforced for the
     identical path. Deliberately separate from redirect_target_guard
-    above: this only needs to run on *static* targets (a dynamic one
-    is already handled, more strictly - denied outright rather than
-    just root-checked - by that function), and only on output
-    redirects, via `shell.extract_output_redirect_targets`, since
-    reading from an arbitrary path outside the project is already
-    unrestricted for the Read tool too.
+    above: this only needs to run on *static* targets (severity
+    "none") - a dynamic one is already handled by that function
+    instead, at whichever severity it resolved to (a "pure" token like
+    `$OUT`/`$(mktemp)` asks, overridable; literal text glued around
+    one denies outright) - so this function doesn't need to, and
+    can't usefully, second-guess a target it can't even resolve to a
+    concrete path. Also only on output redirects, via
+    `shell.extract_output_redirect_targets`, since reading from an
+    arbitrary path outside the project is already unrestricted for the
+    Read tool too.
     """
     import os
     from pathlib import Path
