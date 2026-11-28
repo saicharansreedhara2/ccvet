@@ -34,20 +34,61 @@ auto_programs:
   - uptime
   - ps
   - top
+  # Plain text-transform utilities, found by a deep search for common
+  # read-only commands not yet covered: pure stdin-to-stdout (or
+  # read-only-file-to-stdout) with no file-write capability of their
+  # own. "sort" and "uniq" are deliberately NOT here even though they're
+  # commonly grouped with these - both have a way to write a file
+  # directly as a program argument (sort's "-o FILE", uniq's optional
+  # second positional as an output file), bypassing shell-redirect
+  # checking entirely, so they need the same flag-aware treatment `find`
+  # already gets, not a blanket add. "sed"/"awk" are excluded for the
+  # same reason (sed -i, awk's system()).
+  - cut
+  - tr
+  - nl
+  - fold
+  - fmt
+  - column
+  - pr
+  - comm
+  - paste
+  - md5sum
+  - sha1sum
+  - sha256sum
+  - shasum
+  - cksum
+  # System/environment inspection, read-only regardless of flags (unlike
+  # "hostname", which gets dedicated zero-args-only logic in rules.py
+  # instead, since it can also *set* the hostname when given an
+  # argument).
+  - nproc
+  - arch
+  - locale
+  - free
+  - vm_stat
+  - lscpu
+  - lsblk
+  - sw_vers
 
 # "env" is deliberately NOT here, even though risk-taxonomy.md always
 # said it should ask, not auto - it was shipped in the auto list by
 # mistake. `env` with no arguments dumps the *current session's own*
 # environment, which for an agent session commonly includes real,
-# actively-used API keys and tokens. "ps"/"top" stay auto as a
-# conscious judgment call: they expose *other* processes' info (a real
-# but different, lower-probability vector), and are common enough that
-# asking about them constantly would reintroduce the prompt fatigue
-# ccvet exists to reduce.
+# actively-used API keys and tokens. "printenv" has the identical risk
+# and is deliberately excluded for the same reason. "ps"/"top" stay
+# auto as a conscious judgment call: they expose *other* processes'
+# info (a real but different, lower-probability vector), and are
+# common enough that asking about them constantly would reintroduce
+# the prompt fatigue ccvet exists to reduce.
 
-# npm/pip/pip3 are deliberately absent here — they have their own
-# subcommand-aware classifier in rules.py (list/show/freeze are read-only,
-# everything else asks, publish/upload is blocked).
+# npm/pip/pip3/go/brew are deliberately absent here - they have their
+# own subcommand-aware classifier in rules.py (read-only subcommands
+# like list/show/freeze/env/info are allowed, everything else asks,
+# publish/upload is blocked). "go"/"brew" moved out of ask_programs
+# below into that dedicated logic, found by the same deep search:
+# blanket-asking every brew/go invocation meant even "brew list"/
+# "go env" asked, when they're exactly as read-only as "npm list".
 ask_programs:
   - mkdir
   - touch
@@ -57,8 +98,6 @@ ask_programs:
   - chmod
   - npx
   - cargo
-  - go
-  - brew
   - make
   - docker
   - kill
@@ -82,10 +121,17 @@ ask_programs:
 
 # Git subcommands with no argument-sensitivity (no destructive flags
 # possible for these specific subcommands). "push", "reset", "clean",
-# "branch", "stash", "remote", "tag", and "filter-branch" are all handled
-# by dedicated logic in rules.py instead, since their risk depends
-# entirely on their flags (e.g. "git remote remove origin" and
-# "git tag -d" are mutating, but "git remote -v" and "git tag -l" aren't).
+# "branch", "stash", "remote", "tag", "worktree", and "filter-branch"
+# are all handled by dedicated logic in rules.py instead, since their
+# risk depends entirely on their flags (e.g. "git remote remove origin"
+# and "git tag -d" are mutating, but "git remote -v" and "git tag -l"
+# aren't). "rev-parse"/"show-ref"/"shortlog"/"ls-files"/"cat-file" added
+# by a deep search for common read-only git plumbing: none of these
+# five have a mutating form at all, unlike branch/stash/remote/tag/
+# worktree, so a flat auto-subcommand entry is safe for them.
+# "ls-remote" is deliberately NOT here despite being read-only too - it
+# makes a real network call to a remote the user may not control,
+# which is a different risk class from purely local plumbing.
 git:
-  auto_subcommands: [status, diff, log, show, blame, fetch, describe]
+  auto_subcommands: [status, diff, log, show, blame, fetch, describe, rev-parse, show-ref, shortlog, ls-files, cat-file]
   ask_subcommands: [add, commit, checkout, merge, pull, rebase]

@@ -11,27 +11,31 @@ Four verdicts:
 ## Filesystem and inspection
 | Verdict | Examples |
 |---|---|
-| AUTO | `ls`, `pwd`, `cat`, `less`, `head`, `tail`, `grep`/`rg`/`ag` (no `-exec`), `find` (no `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`), `file`, `stat`, `wc`, `diff`, `tree`, `du`, `df`, `which`, `type` |
-| ASK | `mkdir`, `touch`, `cp`/`mv` within project, `chmod` (non-777, within project), `ln -s`, `env` (could print secrets, so ask, not auto) |
+| AUTO | `ls`, `pwd`, `cat`, `less`, `head`, `tail`, `grep`/`rg`/`ag` (no `-exec`), `find` (no `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`), `file`, `stat`, `wc`, `diff`, `tree`, `du`, `df`, `which`, `type`, plus plain text-transform/checksum/system-inspection utilities (`cut`, `tr`, `nl`, `fold`, `fmt`, `column`, `pr`, `comm`, `paste`, `md5sum`/`sha1sum`/`sha256sum`/`shasum`/`cksum`, `nproc`, `arch`, `locale`, `free`, `vm_stat`, `lscpu`, `lsblk`, `sw_vers`), `hostname` (no arguments only) |
+| ASK | `mkdir`, `touch`, `cp`/`mv` within project, `chmod` (non-777, within project), `ln -s`, `env`/`printenv` (could print secrets, so ask, not auto), `hostname <name>` (sets the hostname), `sort`/`uniq` (both can write a file directly as an argument - `sort -o FILE`, `uniq in out` - bypassing redirect checking entirely, so treated as ask rather than a blanket auto the way `cut`/`tr` are) |
 | BLOCK | `rm -rf /`, `/var`, `/opt`, `/Applications`, `/Library`, `/root`, and the other top-level system directories; `rm -rf ~`, a literal `/Users/<name>` or `/home/<name>` home-directory root, or a bare `*`/`.*` wildcard; `chmod -R 777 /` (octal) or `chmod -R a+rwx /` (symbolic, same effect), **including the same literal `/Users/<name>`/`/home/<name>` home-directory root `rm` catches**; `chown -R` on system paths; `dd if=... of=/dev/sdX`; `mkfs.*`; `diskutil eraseDisk` |
 
 The literal-home-directory-root heuristic (`/Users/charan` is just as catastrophic as `~` or `/`, but isn't knowable as a fixed string in advance) was added for `rm` first and, for a while, never carried over to `chmod`: `rm -rf /Users/charan` denied while `chmod -R 777 /Users/charan` only asked, found by a later testing pass. Both now share the same underlying check, parameterized by each command's own target-name set (`chmod`'s deliberately omits `rm`'s bare-wildcard entries like `*`/`/*`/`.*`, which are specific to a recursive delete, not a permission change).
 
+**A generic rule, not a growing per-program list**: any program invoked with *exactly* `--version`/`-v`/`-V`/`--help`/`-h` and nothing else auto-allows, regardless of which program it is - `node --version`, `python3 -V`, `rustc --version`, and anything else, present or future, without needing to name each one. Deliberately requires the flag to be the *entire* argument list (`rm -v somefile`, a real operand, still asks like any other `rm` invocation) and is checked only as a last resort, after every hard-coded guard and after both `auto_programs`/`ask_programs` list membership - so `sudo -v` (which actually means "refresh the cached credential timestamp", not "print version") still denies via `sudo`'s own unconditional guard, and a program already on `ask_programs` (`chmod --version`, `curl --version`) still asks rather than being swept into this, a deliberately conservative choice rather than a gap.
+
 ## Git
 | Verdict | Examples |
 |---|---|
-| AUTO | `git status`, `git diff`, `git log`, `git show`, `git blame`, `git branch` (list), `git remote -v`/`show` (not add/remove/set-url), `git stash list`, `git fetch`, `git describe`, `git tag -l`/`git tag <name>` (list or create, not `-d`/`--delete`) |
-| ASK | `git add`, `git commit`, `git checkout -b`, `git merge` (non-force), `git pull`, `git rebase` (local, unpushed), `git stash pop`, `git remote add`/`remove`/`rm`/`set-url`/`rename`/`prune` (can redirect future pushes to an attacker-controlled remote), `git tag -d`/`--delete` |
+| AUTO | `git status`, `git diff`, `git log`, `git show`, `git blame`, `git branch` (list, no operand - not `git branch <name>`, which creates one), `git remote -v`/`show` (not add/remove/set-url), `git stash list`/`show`, `git fetch`, `git describe`, `git tag -l`/`git tag <name>` (list or create, not `-d`/`--delete`), `git --version`, plus read-only plumbing with no mutating form at all: `git rev-parse`, `git show-ref`, `git shortlog`, `git ls-files`, `git cat-file`, and `git worktree list`/`git config -l`/`--get` (their own mutating forms - `worktree add`/`remove`, `config <key> <value>` - ask) |
+| ASK | `git add`, `git commit`, `git checkout -b`, `git merge` (non-force), `git pull`, `git rebase` (local, unpushed), `git stash pop`, `git remote add`/`remove`/`rm`/`set-url`/`rename`/`prune` (can redirect future pushes to an attacker-controlled remote), `git tag -d`/`--delete`, `git branch <name>`/`-m <old> <new>` (creating/renaming, deliberately not swept into the list-only AUTO case above), `git worktree add`/`remove`/`prune`, `git config <key> <value>`/`--unset`, `git ls-remote` (a real network call to a remote the user may not control, unlike the purely-local plumbing above) |
 | BLOCK | `git push --force`/`--force-with-lease` to `main`/`master`/protected branches, `git reset --hard`, `git clean -fdx`, `git branch -D` on protected branches, `git push origin --delete <protected>`, `git filter-branch`/`filter-repo` |
 
-`git remote` and `git tag` were originally treated as blanket read-only, with no check on their mutating sub-forms (`remote add/remove/set-url`, `tag -d`). Flagged by an external review and fixed: these two now have the same flag-sensitive handling as `push`/`reset`/`clean`/`branch` always did.
+`git remote` and `git tag` were originally treated as blanket read-only, with no check on their mutating sub-forms (`remote add/remove/set-url`, `tag -d`). Flagged by an external review and fixed: these two now have the same flag-sensitive handling as `push`/`reset`/`clean`/`branch` always did. `branch`/`worktree`/`config`/the five plumbing subcommands above were added later, found by a deep search for common read-only commands not yet covered - each needed the identical list-form-only split (or, for the plumbing five, no split at all, since none of them have a mutating form).
 
 ## Package managers and dependencies
 | Verdict | Examples |
 |---|---|
-| AUTO | `npm list`, `npm view`, `pip show`, `pip list`, `pip freeze`, `cargo check`, `go list`, `brew info` |
-| ASK | `npm install`/`pip install` (new deps), `npm uninstall`, `cargo add`, `go get`, `brew install` |
+| AUTO | `npm list`, `npm view`, `npm --version`, `pip show`, `pip list`, `pip --version`, `go list`, `go env`, `go doc`, `go vet`, `brew list`, `brew info`, `brew outdated`, `brew doctor` |
+| ASK | `npm install`/`pip install` (new deps), `npm uninstall`, `cargo add`, `go get`, `go build`/`run`/`install`/`mod tidy` (compiles or runs code, not purely read-only like `go list`/`env`/`vet`), `brew install`/`upgrade`/`uninstall` |
 | BLOCK | `npm publish`, `twine upload`/`pip upload`, `curl <url> \| sh`/`bash`, `wget -O- <url> \| sh`, anything piping a download straight into a shell |
+
+`go`/`brew` used to be blanket `ask_programs` entries, asking about every invocation including their read-only subcommands the same way `npm`/`pip` would have without their own dedicated classifier - found by the same deep search as the git additions above. `cargo` is deliberately left as a blanket ask rather than given the same subcommand-aware split: `cargo check` runs `build.rs` scripts and macro expansion, which are a real code-execution vector (unlike `go vet`'s pure static analysis), so it doesn't belong in the same "obviously read-only" bucket without more care than this round gave it.
 
 ## Build, test, and lint
 | Verdict | Examples |

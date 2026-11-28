@@ -35,6 +35,77 @@ AUTO_CASES = [
     # (sibling to the denied hosts.yml) carries no token.
     "cat ~/.gitconfig",
     "cat ~/.config/gh/config.yml",
+    # Found by a deep search for common read-only commands not yet
+    # covered - plain text-transform/checksum/system-inspection
+    # utilities with no file-write capability of their own.
+    "cut -d, -f1 file.csv",
+    "tr a-z A-Z",
+    "nl file.txt",
+    "fold -w 80 file.txt",
+    "fmt file.txt",
+    "column -t file.txt",
+    "pr file.txt",
+    "comm a.txt b.txt",
+    "paste a.txt b.txt",
+    "md5sum file.txt",
+    "sha1sum file.txt",
+    "sha256sum file.txt",
+    "shasum file.txt",
+    "cksum file.txt",
+    "nproc",
+    "arch",
+    "locale",
+    "free -h",
+    "vm_stat",
+    "lscpu",
+    "lsblk",
+    "sw_vers",
+    # A bare --version/-v/-V/--help/-h, and nothing else, can't do
+    # anything but print information and exit - true regardless of
+    # which program it is. See test_bare_info_flag_cases below for the
+    # negative cases (sudo -v, a version flag plus a real operand,
+    # mkfs's blanket deny) proving this isn't swept too broadly.
+    "node --version",
+    "node -v",
+    "python3 --version",
+    "python3 -V",
+    "rustc --version",
+    "ruby --help",
+    "git --version",
+    "npm --version",
+    "npm -v",
+    "pip --version",
+    # git read-only plumbing with no mutating form at all.
+    "git rev-parse HEAD",
+    "git show-ref",
+    "git shortlog",
+    "git ls-files",
+    "git cat-file -p HEAD",
+    # git subcommands that need the list-form-only split, same pattern
+    # already used for remote/tag/stash.
+    "git branch",
+    "git branch -a",
+    "git branch -r",
+    "git worktree list",
+    "git config -l",
+    "git config --get user.name",
+    "git config --get-all user.email",
+    "git stash show",
+    # go/brew moved from blanket ask_programs to a subcommand-aware
+    # classifier, same pattern as npm/pip - these are their read-only
+    # subcommands.
+    "go env",
+    "go list ./...",
+    "go doc fmt.Println",
+    "go vet ./...",
+    "brew list",
+    "brew info wget",
+    "brew outdated",
+    "brew doctor",
+    # hostname can also *set* the hostname when given an argument, so
+    # only the zero-args form is auto-allowed - see the negative case
+    # in test_bare_info_flag_cases.
+    "hostname",
 ]
 
 ASK_CASES = [
@@ -77,6 +148,32 @@ ASK_CASES = [
     "cat myfile > $(echo ~/.bashrc)",
     "cat myfile > $(mktemp)",
     "cat myfile > $OUT",
+    # Negative cases for the new read-only additions above: these look
+    # similar to an auto-allowed form but actually mutate something,
+    # and must still ask (or, for the dedicated tests below, deny).
+    "git branch newbranch",
+    "git branch -m old new",
+    "git worktree add ../scratch",
+    "git worktree remove ../scratch",
+    "git config user.name bob",
+    "git config --unset user.name",
+    "git ls-remote origin",
+    "go build .",
+    "go run main.go",
+    "go install .",
+    "go mod tidy",
+    "brew install wget",
+    "brew upgrade",
+    "brew uninstall wget",
+    "hostname new-machine-name",
+    "sort file.txt",
+    "uniq in.txt out.txt",
+    # A version/help flag is only safe alone - with a real operand, the
+    # command does its normal (non-read-only) thing, verbosely.
+    "rm -v /tmp/somefile",
+    "cp -v a.txt b.txt",
+    "curl -v https://example.com",
+    "npm -v install",
 ]
 
 BLOCK_CASES = [
@@ -88,6 +185,16 @@ BLOCK_CASES = [
     "chmod -R 000 /etc",
     "dd if=/dev/zero of=/dev/disk2",
     "mkfs.ext4 /dev/sda1",
+    # The generic bare-info-flag fallback must never bypass a guard
+    # that denies by program name alone, regardless of args: sudo/
+    # doas's own "-v" specifically means "refresh the cached
+    # credential timestamp" (a real side effect), not "print version" -
+    # and mkfs's blanket deny is deliberately not carved out for
+    # --version either, see the comment on _BARE_INFO_FLAGS.
+    "sudo -v",
+    "sudo --version",
+    "doas -v",
+    "mkfs.ext4 --version",
     "diskutil eraseDisk free ExFAT disk2",
     "git push --force",
     "git push -f origin main",
@@ -421,3 +528,30 @@ def test_specific_secret_path_hit_is_passed_through_redact_harmlessly():
     # doesn't corrupt an ordinary path.
     verdict = evaluate("cat .env")
     assert verdict.reason.endswith("(.env)")
+
+
+@pytest.mark.parametrize(
+    "program_with_version_flag",
+    ["chmod --version", "curl --version", "aws --version", "kubectl --version", "terraform --version"],
+)
+def test_programs_already_on_ask_programs_still_ask_despite_a_version_flag(program_with_version_flag):
+    # Found while implementing the generic bare-info-flag fallback: a
+    # program already listed in ask_programs hits that blanket check
+    # before the fallback ever runs (the fallback sits right before the
+    # *final* catch-all, after both AUTO_PROGRAMS and ASK_PROGRAMS), so
+    # its own --version still asks rather than being auto-allowed. Not
+    # a gap worth closing - conservative is the right direction here,
+    # and the fallback's actual value is covering genuinely unlisted
+    # programs (node, python3, rustc, ...) uniformly.
+    assert evaluate(program_with_version_flag).decision == "ask"
+
+
+@pytest.mark.parametrize("program_with_version_flag", ["dd --version", "diskutil --version"])
+def test_programs_with_dedicated_logic_but_no_list_membership_reach_the_fallback(program_with_version_flag):
+    # Contrast with the test above: "dd"/"diskutil" have their own
+    # specific-condition checks (dd's of=/dev/*, diskutil's
+    # eraseDisk/eraseVolume/zeroDisk) but aren't *also* in
+    # ask_programs, so when their own condition doesn't match, they
+    # fall all the way through to the generic fallback and correctly
+    # get allowed for a bare version flag.
+    assert evaluate(program_with_version_flag).decision == "allow"

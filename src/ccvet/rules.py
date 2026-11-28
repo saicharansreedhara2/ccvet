@@ -34,6 +34,28 @@ NETWORK_PROGRAMS = {"curl", "wget", "nc", "netcat", "ssh", "scp", "rsync", "ftp"
 
 NPM_AUTO_SUBCOMMANDS = {"list", "ls", "view", "show", "ping", "whoami", "outdated", "audit"}
 PIP_AUTO_SUBCOMMANDS = {"show", "list", "freeze", "check"}
+# Found by a deep search for common read-only commands: "go"/"brew"
+# used to be blanket ask_programs entries, asking about even their
+# read-only subcommands the same way npm/pip would have without their
+# own dedicated classifier. "go build"/"run"/"install"/"get"/"mod
+# tidy" etc. and "brew install"/"upgrade"/"uninstall" are all still
+# unrecognized by these sets and fall to the generic ask fallback.
+GO_AUTO_SUBCOMMANDS = {"list", "env", "version", "doc", "vet"}
+BREW_AUTO_SUBCOMMANDS = {"list", "info", "outdated", "deps", "doctor", "config"}
+# A program invoked with *only* one of these, nothing else, can't do
+# anything but print information and exit - true regardless of which
+# program it is, which is what makes this a generic fallback rather
+# than a per-program list. Deliberately requires the flag to be the
+# *entire* argument list: `rm -v somefile` (verbose rm, a real
+# operand) must not be swept into this, only `rm -v` alone (which,
+# like every other program here, does nothing without an operand).
+# Not hoisted above the per-program guards earlier in _classify_argv -
+# sudo/doas's "-v" specifically means "refresh the cached credential
+# timestamp", not "print version", so this must never run before
+# sudo's own unconditional deny, and mkfs's name-based blanket deny
+# is left untouched on purpose rather than carving out an edge case
+# nobody asked for.
+_BARE_INFO_FLAGS = {"--version", "-v", "-V", "--help", "-h"}
 
 PROTECTED_BRANCHES = {"main", "master"}
 # Top-level system directories plus bare wildcards. Originally much
@@ -243,6 +265,13 @@ def _classify_git(args):
 
     if not args:
         return Verdict.ask("bare `git` call with no subcommand", overridable=True)
+    # "git" dispatches here unconditionally (see classify_argv), so the
+    # generic bare-version/help-flag fallback near the end of
+    # _classify_argv never gets a chance to run for it - handled
+    # locally instead. git has no short "-v" for version (unlike most
+    # other tools), so only "--version" is recognized.
+    if args == ["--version"]:
+        return Verdict.allow("git --version only prints version info", overridable=True)
 
     sub, rest = args[0], args[1:]
 
@@ -254,16 +283,30 @@ def _classify_git(args):
         return Verdict.deny("git reset --hard destroys uncommitted work")
     if sub == "clean" and any(f.lstrip("-").find("f") != -1 for f in rest if f.startswith("-")):
         return Verdict.deny("git clean -f* permanently deletes untracked files")
-    if sub == "branch" and any(f in rest for f in ("-D", "-d", "--delete")):
-        target = next((a for a in rest if not a.startswith("-")), "")
-        if target.lower() in PROTECTED_BRANCHES:
-            return Verdict.deny(f"git branch -D on protected branch {target!r}")
-        return Verdict.ask(f"git branch -D {target}".strip(), overridable=True)
+    if sub == "branch":
+        if any(f in rest for f in ("-D", "-d", "--delete")):
+            target = next((a for a in rest if not a.startswith("-")), "")
+            if target.lower() in PROTECTED_BRANCHES:
+                return Verdict.deny(f"git branch -D on protected branch {target!r}")
+            return Verdict.ask(f"git branch -D {target}".strip(), overridable=True)
+        # Found by a deep search for common read-only commands: a bare
+        # `git branch` (or with only listing flags like -a/-r/-v/--list,
+        # none of which take a value) just lists branches and mutates
+        # nothing, but fell to the generic "unrecognized subcommand"
+        # ask fallback since "branch" was never in GIT_AUTO_SUBCOMMANDS
+        # (it can't be - most of its other forms do mutate). Anything
+        # with a non-flag operand (creating, renaming, or checking out
+        # a branch via `git branch <name>`/`-m old new`) deliberately
+        # falls through to the ask fallback below instead of being
+        # swept into this - only the zero-operand listing form is
+        # unambiguous.
+        if not any(not a.startswith("-") for a in rest):
+            return Verdict.allow("git branch (list) is read-only", overridable=True)
     if sub == "filter-branch":
         return Verdict.deny("git filter-branch rewrites history")
     if sub == "stash":
-        if not rest or rest[0] == "list":
-            return Verdict.allow("git stash list is read-only", overridable=True)
+        if not rest or rest[0] in {"list", "show"}:
+            return Verdict.allow(f"git stash {' '.join(rest)}".strip() + " is read-only", overridable=True)
         return Verdict.ask(f"git stash {' '.join(rest)}".strip(), overridable=True)
     # "remote" and "tag" were in GIT_AUTO_SUBCOMMANDS as if every
     # invocation were as harmless as `git remote -v`/`git tag -l`, with
@@ -278,6 +321,22 @@ def _classify_git(args):
         if any(f in rest for f in ("-d", "--delete")):
             return Verdict.ask(f"git tag {' '.join(rest)}".strip(), overridable=True)
         return Verdict.allow("git tag (list/create) is read-only-ish", overridable=True)
+    # Found by the same deep search: `git worktree list` is as
+    # read-only as `git branch`/`git remote` with no args, but
+    # `worktree add`/`remove`/`prune`/`move`/`lock`/`unlock` all mutate
+    # the working tree layout, so this needs the exact same
+    # list-form-only split as remote/tag/stash above.
+    if sub == "worktree":
+        if rest and rest[0] == "list":
+            return Verdict.allow("git worktree list is read-only", overridable=True)
+        return Verdict.ask(f"git worktree {' '.join(rest)}".strip(), overridable=True)
+    # `git config` without a value to set is read-only (-l/--list,
+    # --get/--get-all <key>); `git config <key> <value>` (or --add/
+    # --unset/--replace-all) mutates .git/config or ~/.gitconfig.
+    if sub == "config":
+        if rest and (rest[0] in {"-l", "--list"} or rest[0] in {"--get", "--get-all"}):
+            return Verdict.allow(f"git config {' '.join(rest)}".strip() + " is read-only", overridable=True)
+        return Verdict.ask(f"git config {' '.join(rest)}".strip(), overridable=True)
     if sub in GIT_AUTO_SUBCOMMANDS:
         return Verdict.allow(f"git {sub} is read-only", overridable=True)
     if sub in GIT_ASK_SUBCOMMANDS:
@@ -381,14 +440,40 @@ def _classify_argv(argv):
         return Verdict.deny("npm publish pushes a package to the public registry")
 
     if program == "npm":
+        # npm/pip dispatch here unconditionally, same as git above, so
+        # they need their own local version-flag carve-out too - the
+        # generic one near the end of this function never gets reached
+        # for them.
+        if len(args) == 1 and args[0] in _BARE_INFO_FLAGS:
+            return Verdict.allow(f"npm {args[0]} only prints version/help info", overridable=True)
         if args and args[0] in NPM_AUTO_SUBCOMMANDS:
             return Verdict.allow(f"npm {args[0]} is read-only", overridable=True)
         return Verdict.ask(f"npm {' '.join(args)}".strip(), overridable=True)
 
     if program in {"pip", "pip3"}:
+        if len(args) == 1 and args[0] in _BARE_INFO_FLAGS:
+            return Verdict.allow(f"{program} {args[0]} only prints version/help info", overridable=True)
         if args and args[0] in PIP_AUTO_SUBCOMMANDS:
             return Verdict.allow(f"{program} {args[0]} is read-only", overridable=True)
         return Verdict.ask(f"{program} {' '.join(args)}".strip(), overridable=True)
+
+    if program == "go":
+        if args and args[0] in GO_AUTO_SUBCOMMANDS:
+            return Verdict.allow(f"go {args[0]} is read-only", overridable=True)
+        return Verdict.ask(f"go {' '.join(args)}".strip(), overridable=True)
+
+    if program == "brew":
+        if args and args[0] in BREW_AUTO_SUBCOMMANDS:
+            return Verdict.allow(f"brew {args[0]} is read-only", overridable=True)
+        return Verdict.ask(f"brew {' '.join(args)}".strip(), overridable=True)
+
+    # Unlike the text/system-inspection additions in default_policy.yaml,
+    # "hostname" can also *set* the hostname when given an argument
+    # (typically requires root, but the attempt itself shouldn't be
+    # silently auto-approved) - needs this dedicated zero-args-only
+    # check rather than a blanket YAML entry.
+    if program == "hostname" and not args:
+        return Verdict.allow("hostname with no arguments only prints the current hostname", overridable=True)
 
     if program == "twine" and "upload" in args:
         return Verdict.deny("twine upload pushes a package to the public registry")
@@ -423,5 +508,17 @@ def _classify_argv(argv):
 
     if program in ASK_PROGRAMS:
         return Verdict.ask(f"{program} {' '.join(args)}".strip(), overridable=True)
+
+    # Generic fallback for any program not already handled above,
+    # found by a deep search for common read-only commands: a bare
+    # --version/-v/-V/--help/-h with *nothing else* can't do anything
+    # but print information and exit, regardless of which program it
+    # is - this is what makes it a program-agnostic rule rather than
+    # another name to add to a list, covering node/python3/rustc/
+    # cargo/ruby/php/etc. uniformly, present or future. See the
+    # _BARE_INFO_FLAGS definition above for why this isn't hoisted
+    # earlier in this function.
+    if len(args) == 1 and args[0] in _BARE_INFO_FLAGS:
+        return Verdict.allow(f"{program} {args[0]} only prints version/help info, no side effects", overridable=True)
 
     return Verdict.ask(f"unrecognized command `{program}`, no rule matched", overridable=True)
