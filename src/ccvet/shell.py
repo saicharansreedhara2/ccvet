@@ -153,14 +153,19 @@ def _redirect_target_severity(word) -> str:
     return "deny"
 
 
-def _collect_redirect_targets(node, out):
+_WRITE_REDIRECT_TYPES = {">", ">>"}
+
+
+def _collect_redirect_targets(node, out, only_types=None):
     kind = getattr(node, "kind", None)
     if kind in ("commandsubstitution", "processsubstitution"):
-        _collect_redirect_targets(node.command, out)
+        _collect_redirect_targets(node.command, out, only_types)
         return
     if kind == "command":
         for part in node.parts:
             if getattr(part, "kind", None) != "redirect":
+                continue
+            if only_types is not None and getattr(part, "type", None) not in only_types:
                 continue
             target = getattr(part, "output", None)
             if getattr(target, "kind", None) == "word":
@@ -176,7 +181,7 @@ def _collect_redirect_targets(node, out):
                 # unverifiable.
                 out.append((target.word, _redirect_target_severity(target)))
     for part in _children(node):
-        _collect_redirect_targets(part, out)
+        _collect_redirect_targets(part, out, only_types)
 
 
 def extract_redirect_targets(command: str):
@@ -201,6 +206,34 @@ def extract_redirect_targets(command: str):
     out = []
     for tree in trees:
         _collect_redirect_targets(tree, out)
+    return out
+
+
+def extract_output_redirect_targets(command: str):
+    """Like extract_redirect_targets() above, but only for *output*
+    redirects (">"/">>" - truncate or append), never input ones
+    ("<"/"<<<"/heredocs). Used specifically for the project-root
+    boundary check (rules.redirect_target_root_guard): found by
+    external review, a redirect-only command (no command word before
+    the redirect at all, e.g. `> /etc/hosts` or `>
+    /Users/charan/outside.txt`) classified as a plain allow - the
+    empty argv it extracts to is correctly treated as a no-op by
+    classify_argv (the same shape a bare variable assignment produces),
+    but the redirect itself still truncates/creates the target file,
+    and that target was only ever checked against the secret/
+    persistence pattern lists (extract_redirect_targets, above), never
+    against the project-root boundary the way an equivalent Write tool
+    call would be. An input redirect doesn't need this: reading from an
+    arbitrary path outside the project is already unrestricted for the
+    Read tool too, so only directionality that writes needs the check.
+    """
+    try:
+        trees = bashlex.parse(command)
+    except Exception:
+        return None
+    out = []
+    for tree in trees:
+        _collect_redirect_targets(tree, out, only_types=_WRITE_REDIRECT_TYPES)
     return out
 
 

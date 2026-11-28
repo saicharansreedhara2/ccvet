@@ -134,6 +134,29 @@ def test_extract_redirect_targets_returns_none_for_unparseable_input():
     assert shell.extract_redirect_targets("echo 'unterminated") is None
 
 
+def test_extract_output_redirect_targets_only_includes_output_direction():
+    # Found by external review: a redirect target was only ever
+    # checked against secret/persistence patterns, never the
+    # project-root boundary - this is the extraction used for that new
+    # check, and it must only include ">"/">>" (writes), never "<"/
+    # "<<<" (reads), since reading from outside the project is already
+    # unrestricted for the Read tool too.
+    assert shell.extract_output_redirect_targets("echo hi > out.txt") == [("out.txt", "none")]
+    assert shell.extract_output_redirect_targets("echo hi >> out.txt") == [("out.txt", "none")]
+    assert shell.extract_output_redirect_targets("cat < in.txt") == []
+    assert shell.extract_output_redirect_targets("cmd <<< somestring") == []
+
+
+def test_extract_output_redirect_targets_returns_none_for_unparseable_input():
+    assert shell.extract_output_redirect_targets("echo 'unterminated") is None
+
+
+def test_extract_output_redirect_targets_finds_a_redirect_with_no_command_before_it():
+    # The specific shape that motivated the new check: no command word
+    # at all before the redirect, just the redirect itself.
+    assert shell.extract_output_redirect_targets("> bare_redirect.txt") == [("bare_redirect.txt", "none")]
+
+
 def test_fd_duplication_redirect_has_no_word_target():
     # `2>&1` duplicates a file descriptor (an int on the wire, not a
     # word) - must not crash and must not appear as a target.

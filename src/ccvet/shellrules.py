@@ -54,6 +54,19 @@ def evaluate(command: str, cwd: str = ".") -> Verdict:
     if redirect_verdict is not None:
         candidates.append(redirect_verdict)
 
+    # Separate from the guard above, and from the per-argv classify_argv
+    # calls below: a redirect-only command (no command word before the
+    # redirect at all, e.g. `> /etc/hosts`) extracts to a single
+    # empty-argv "command", which classify_argv correctly treats as a
+    # no-op allow (the same shape a bare variable assignment produces) -
+    # but the redirect itself still writes. Without this, that write's
+    # target was never checked against the project-root boundary the
+    # way an equivalent Write tool call is.
+    output_redirect_targets = shell.extract_output_redirect_targets(command) or []
+    redirect_root_verdict = rules.redirect_target_root_guard(output_redirect_targets, cwd)
+    if redirect_root_verdict is not None:
+        candidates.append(redirect_root_verdict)
+
     candidates.extend(
         rules.classify_argv(argv, has_dynamic_arg=has_dynamic_arg)
         for argv, _dynamic_name, has_dynamic_arg in commands

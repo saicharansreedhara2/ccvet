@@ -55,8 +55,36 @@ BREW_AUTO_SUBCOMMANDS = {"list", "info", "outdated", "deps", "doctor", "config"}
 # sudo's own unconditional deny, and mkfs's name-based blanket deny
 # is left untouched on purpose rather than carving out an edge case
 # nobody asked for.
-_BARE_INFO_FLAGS = {"--version", "-v", "-V", "--help", "-h"}
+#
+# Found by external review, a real regression: short forms (-v, -V,
+# -h) were originally included too, on the assumption that they're
+# "true regardless of which program it is" - false for shell
+# interpreters specifically. Confirmed by execution, not just reading
+# docs: `echo 'echo PWNED' | bash -v` and `| sh -v` both run the piped
+# command (-v is bash/sh/zsh's verbose flag, not version; with no
+# script argument the shell still reads and executes from stdin), so
+# `cat script.sh | bash -v` was a full, silent bypass of the exact
+# obfuscation-piped-to-shell pattern shell.pipeline_risk exists to
+# catch - a single-letter flag collision this project has been bitten
+# by before (sudo -v, grep -v). Long forms don't have this problem:
+# confirmed `bash --version`/`--help` and `sh`/`zsh` equivalents all
+# print and exit without touching stdin. Only the long forms, which
+# are a near-universal GNU-style convention with no competing letter-
+# flag meaning, are kept.
+_BARE_INFO_FLAGS = {"--version", "--help"}
 
+# Found by external review, a real bug: the previous `git branch`
+# list-detection logic inferred safety from "every remaining argument
+# starts with a dash", which incorrectly allowed `--unset-upstream`
+# (removes the branch's upstream tracking, confirmed by execution -
+# branch.b2.merge went from set to removed in a scratch repo) and
+# `--edit-description` (spawns an editor) - both are zero-operand
+# flags that still mutate. An explicit allowlist of the actual listing
+# flags, rather than inferring safety from "no non-flag operand",
+# can't make that mistake: anything not in this set, including an
+# unrecognized flag, falls through to the ask fallback instead of
+# being assumed safe.
+GIT_BRANCH_LIST_FLAGS = {"-a", "-r", "-v", "-vv", "--list", "--all", "--remotes", "--show-current", "--color", "--no-color"}
 PROTECTED_BRANCHES = {"main", "master"}
 # Top-level system directories plus bare wildcards. Originally much
 # narrower (missing /var, /opt, /Applications, /Library, /root, /sbin,
@@ -199,6 +227,42 @@ def redirect_target_guard(redirect_targets):
     return None
 
 
+def redirect_target_root_guard(output_redirect_targets, cwd):
+    """Found by external review, a real gap: `> /etc/hosts` or `>
+    /Users/charan/outside.txt` (a redirect with no command before it
+    at all, or any other command whose only side effect is the
+    redirect) classified as a plain allow - the empty argv a bare
+    redirect extracts to is correctly a no-op in `classify_argv`'s
+    eyes (the same shape a bare variable assignment produces), but the
+    redirect itself still truncates/creates the target file. That
+    target was only ever checked against the secret/persistence
+    pattern lists above, never against the project-root boundary the
+    way an equivalent Write tool call is in `fsrules.py` - a Bash
+    redirect to an arbitrary location outside the project silently
+    bypassed a protection the Write tool already enforced for the
+    identical path. Deliberately separate from redirect_target_guard
+    above: this only needs to run on *static* targets (a dynamic one
+    is already handled, more strictly - denied outright rather than
+    just root-checked - by that function), and only on output
+    redirects, via `shell.extract_output_redirect_targets`, since
+    reading from an arbitrary path outside the project is already
+    unrestricted for the Read tool too.
+    """
+    import os
+    from pathlib import Path
+
+    from .verdict import Verdict
+
+    project_root = Path(os.path.realpath(cwd))
+    for target, severity in output_redirect_targets:
+        if severity != "none":
+            continue
+        resolved = paths.resolve(target, cwd)
+        if not paths.is_within(resolved, project_root):
+            return Verdict.deny(f"command redirects outside the project root ({resolved})")
+    return None
+
+
 def _normalize_target(t: str) -> str:
     # "/".rstrip("/") would otherwise collapse to "" and silently escape
     # the catastrophic-targets check entirely.
@@ -290,17 +354,17 @@ def _classify_git(args):
                 return Verdict.deny(f"git branch -D on protected branch {target!r}")
             return Verdict.ask(f"git branch -D {target}".strip(), overridable=True)
         # Found by a deep search for common read-only commands: a bare
-        # `git branch` (or with only listing flags like -a/-r/-v/--list,
-        # none of which take a value) just lists branches and mutates
-        # nothing, but fell to the generic "unrecognized subcommand"
-        # ask fallback since "branch" was never in GIT_AUTO_SUBCOMMANDS
-        # (it can't be - most of its other forms do mutate). Anything
-        # with a non-flag operand (creating, renaming, or checking out
-        # a branch via `git branch <name>`/`-m old new`) deliberately
-        # falls through to the ask fallback below instead of being
-        # swept into this - only the zero-operand listing form is
-        # unambiguous.
-        if not any(not a.startswith("-") for a in rest):
+        # `git branch` (or with only listing flags like -a/-r/-v/
+        # --list, none of which take a value) just lists branches and
+        # mutates nothing, but fell to the generic "unrecognized
+        # subcommand" ask fallback since "branch" was never in
+        # GIT_AUTO_SUBCOMMANDS (it can't be - most of its other forms
+        # do mutate). Everything else - creating/renaming a branch
+        # (`<name>`/`-m old new`), or a zero-operand mutating flag not
+        # in GIT_BRANCH_LIST_FLAGS (`--unset-upstream`,
+        # `--edit-description`) - deliberately falls through to the
+        # ask fallback below instead of being assumed safe.
+        if all(a in GIT_BRANCH_LIST_FLAGS for a in rest):
             return Verdict.allow("git branch (list) is read-only", overridable=True)
     if sub == "filter-branch":
         return Verdict.deny("git filter-branch rewrites history")
@@ -446,6 +510,14 @@ def _classify_argv(argv):
         # for them.
         if len(args) == 1 and args[0] in _BARE_INFO_FLAGS:
             return Verdict.allow(f"npm {args[0]} only prints version/help info", overridable=True)
+        # Found by external review, a pre-existing bug this round's
+        # generalization to go/brew made more consequential: checking
+        # only args[0] against NPM_AUTO_SUBCOMMANDS let "npm audit fix"
+        # through on the strength of "audit" alone - npm's own docs
+        # describe "audit fix" as automatically installing changes,
+        # not read-only the way a bare "npm audit" is.
+        if args and args[0] == "audit" and "fix" in args[1:]:
+            return Verdict.ask("npm audit fix can automatically install dependency changes", overridable=True)
         if args and args[0] in NPM_AUTO_SUBCOMMANDS:
             return Verdict.allow(f"npm {args[0]} is read-only", overridable=True)
         return Verdict.ask(f"npm {' '.join(args)}".strip(), overridable=True)
@@ -458,6 +530,13 @@ def _classify_argv(argv):
         return Verdict.ask(f"{program} {' '.join(args)}".strip(), overridable=True)
 
     if program == "go":
+        # Found by external review: checking only args[0] against
+        # GO_AUTO_SUBCOMMANDS let "go env -w ..." through on the
+        # strength of "env" alone - documented Go behavior is that
+        # "-w" writes the change persistently to the GOENV config
+        # file, unlike a bare "go env" (prints current values only).
+        if args and args[0] == "env" and "-w" in args[1:]:
+            return Verdict.ask(f"go env {' '.join(args[1:])}".strip() + " writes the persistent GOENV config", overridable=True)
         if args and args[0] in GO_AUTO_SUBCOMMANDS:
             return Verdict.allow(f"go {args[0]} is read-only", overridable=True)
         return Verdict.ask(f"go {' '.join(args)}".strip(), overridable=True)
@@ -502,6 +581,16 @@ def _classify_argv(argv):
         if any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
             return Verdict.ask(f"find with -delete/-exec/-execdir/-ok/-okdir can modify or remove files ({args!r})", overridable=True)
         return Verdict.allow("find without -delete/-exec/-execdir/-ok/-okdir is read-only", overridable=True)
+
+    # Found by external review (flagged as unverified on macOS, but
+    # documented Linux behavior): "lsblk" is otherwise blanket-safe
+    # (added to AUTO_PROGRAMS above), but "--fstrim" discards unused
+    # blocks on the listed devices - a real effect on the device, not
+    # a pure read, so it needs excluding before the blanket check
+    # below rather than being swept in with the rest of lsblk's
+    # ordinary, genuinely read-only usage.
+    if program == "lsblk" and "--fstrim" in args:
+        return Verdict.ask("lsblk --fstrim discards unused blocks on the listed devices, not a pure read", overridable=True)
 
     if program in AUTO_PROGRAMS:
         return Verdict.allow(f"{program} is on the read-only allowlist", overridable=True)

@@ -60,20 +60,18 @@ AUTO_CASES = [
     "lscpu",
     "lsblk",
     "sw_vers",
-    # A bare --version/-v/-V/--help/-h, and nothing else, can't do
-    # anything but print information and exit - true regardless of
-    # which program it is. See test_bare_info_flag_cases below for the
-    # negative cases (sudo -v, a version flag plus a real operand,
-    # mkfs's blanket deny) proving this isn't swept too broadly.
+    # A bare --version/--help, and nothing else, can't do anything but
+    # print information and exit - true regardless of which program it
+    # is. Only the long forms: see
+    # test_bare_info_flag_short_forms_are_not_auto_approved for why -v/
+    # -V/-h were deliberately dropped (bash/sh/zsh's "-v" is verbose
+    # mode, not version, and still reads/executes stdin).
     "node --version",
-    "node -v",
     "python3 --version",
-    "python3 -V",
     "rustc --version",
     "ruby --help",
     "git --version",
     "npm --version",
-    "npm -v",
     "pip --version",
     # git read-only plumbing with no mutating form at all.
     "git rev-parse HEAD",
@@ -168,6 +166,15 @@ ASK_CASES = [
     "hostname new-machine-name",
     "sort file.txt",
     "uniq in.txt out.txt",
+    # The other three negative cases found by the same external
+    # review as the "git branch"/shell-interpreter fixes above: each
+    # mutates despite looking like it only extends an already-allowed
+    # subcommand/program.
+    "git branch --unset-upstream",
+    "git branch --edit-description",
+    "go env -w GOPROXY=direct",
+    "npm audit fix",
+    "lsblk --fstrim /dev/sda1",
     # A version/help flag is only safe alone - with a real operand, the
     # command does its normal (non-read-only) thing, verbosely.
     "rm -v /tmp/somefile",
@@ -388,8 +395,55 @@ def test_chmod_755_on_a_local_dir_is_not_falsely_flagged_catastrophic():
     assert verdict.decision != "deny"
 
 
-def test_benign_output_redirect_is_not_falsely_flagged():
-    verdict = evaluate("echo hi > /tmp/safe_output.txt")
+def test_benign_output_redirect_within_the_project_is_not_falsely_flagged(tmp_path):
+    # A redirect target that's neither a secret/persistence path nor
+    # outside the project root must not be falsely flagged by either
+    # check.
+    verdict = evaluate("echo hi > safe_output.txt", str(tmp_path))
+    assert verdict.decision != "deny"
+
+
+def test_output_redirect_outside_the_project_root_denies(tmp_path):
+    # Found by external review: a redirect target was only ever
+    # checked against the secret/persistence pattern lists, never
+    # against the project-root boundary the way an equivalent Write
+    # tool call is in fsrules.py - `echo hi > /tmp/x` (outside
+    # whatever the project root is) classified as a plain allow, the
+    # same path a Write tool call to it would have denied.
+    outside = tmp_path.parent / "outside_sibling_dir"
+    outside.mkdir(exist_ok=True)
+    verdict = evaluate(f"echo hi > {outside / 'x.txt'}", str(tmp_path))
+    assert verdict.decision == "deny"
+    assert "outside the project root" in verdict.reason
+
+
+def test_redirect_only_command_outside_the_project_root_denies(tmp_path):
+    # The specific shape that motivated the fix: no command word
+    # before the redirect at all, which classify_argv's own no-op
+    # handling (for the resulting empty argv) must not let slip past
+    # the project-root check - the redirect itself still writes.
+    outside = tmp_path.parent / "outside_sibling_dir2"
+    outside.mkdir(exist_ok=True)
+    verdict = evaluate(f"> {outside / 'x.txt'}", str(tmp_path))
+    assert verdict.decision == "deny"
+    assert "outside the project root" in verdict.reason
+
+
+def test_redirect_only_command_within_the_project_root_is_allowed(tmp_path):
+    verdict = evaluate("> newfile.txt", str(tmp_path))
+    assert verdict.decision != "deny"
+
+
+def test_input_redirect_outside_the_project_root_is_not_root_checked(tmp_path):
+    # The project-root boundary check only applies to writes - reading
+    # from an arbitrary path outside the project is already
+    # unrestricted for the Read tool too, so an input redirect
+    # (reading *from* a file, not writing to one) must not be swept
+    # into this.
+    outside = tmp_path.parent / "outside_sibling_dir3"
+    outside.mkdir(exist_ok=True)
+    (outside / "notes.txt").write_text("hello")
+    verdict = evaluate(f"cat < {outside / 'notes.txt'}", str(tmp_path))
     assert verdict.decision != "deny"
 
 
@@ -555,3 +609,49 @@ def test_programs_with_dedicated_logic_but_no_list_membership_reach_the_fallback
     # fall all the way through to the generic fallback and correctly
     # get allowed for a bare version flag.
     assert evaluate(program_with_version_flag).decision == "allow"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["node -v", "node -h", "python3 -V", "npm -v", "pip -V", "rustc -v"],
+)
+def test_bare_info_flag_short_forms_are_not_auto_approved(command):
+    # Found by external review, the fix for a real regression: -v/-V/
+    # -h were originally in the generic fallback's flag set too, on
+    # the premise that they're "true regardless of which program it
+    # is" - false for shell interpreters. Dropped entirely (not just
+    # for shells specifically) since the collision risk is inherent to
+    # single-letter flags in general, not just this one program class.
+    # These particular invocations landing on "ask" rather than
+    # "allow" is an acceptable, conservative cost of the fix.
+    assert evaluate(command).decision == "ask"
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["bash -v", "bash -h", "sh -v", "sh -h", "zsh -v", "zsh -h"],
+)
+def test_bare_shell_interpreter_flags_are_not_auto_approved(command):
+    # The specific, severe case that motivated the fix above: bash/sh/
+    # zsh's "-v" is verbose *execution* mode, not version, and with no
+    # script argument the shell still reads and executes commands from
+    # stdin. Confirmed by execution, not just reasoning: `echo "echo
+    # PWNED" | bash -v` actually runs the piped command. "-h" is
+    # bash/zsh's hash-tracking option letter, not help, for the same
+    # reason.
+    assert evaluate(command).decision == "ask"
+
+
+def test_shell_interpreter_with_pure_verbose_flag_does_not_bypass_pipeline_risk():
+    # The full-severity version of the regression above: before the
+    # fix, `cat script.sh | bash -v` classified as a complete, silent
+    # allow - "cat" is on the read-only allowlist and "bash -v" was
+    # (incorrectly) treated as a pure info flag, so most_severe() saw
+    # two allows and nothing else. This is exactly the "arbitrary
+    # script piped into a shell interpreter" shape shell.pipeline_risk
+    # exists to catch for base64/curl/wget; "cat" was never covered by
+    # that specific check (it isn't a decode/download program), so the
+    # bare "bash -v" misclassification was the only thing standing
+    # between this and a full bypass.
+    verdict = evaluate("cat script.sh | bash -v")
+    assert verdict.decision != "allow"
